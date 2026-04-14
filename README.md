@@ -2,6 +2,12 @@
 
 This project simulates a 5-player Texas Hold'em table where each player is controlled by a different LLM agent.
 
+## New Features (Phase 1)
+- Visual table mode with player panels, dealer button, cards, and speech bubbles.
+- Optional play-along mode where you take one seat.
+- In play-along mode, opponent hole cards are hidden while your cards remain visible.
+- You can optionally send a chat line before choosing your action.
+
 ## Agents
 - Llama Agent (`llama3.1:8b` via Microsoft Agent Framework + Ollama)
 - Mistral Agent (`mistral:7b` via Microsoft Agent Framework + Ollama)
@@ -38,12 +44,20 @@ Optional flags:
 - `--small-blind 5`
 - `--big-blind 10`
 - `--table-talk ask|on|off`
-- `--display-mode ask|live|replay`
+- `--display-mode ask|live|replay|visual`
+- `--play-along ask|on|off`
+- `--player-name You`
 
 Example (no startup prompts):
 
 ```bash
 python main.py --table-talk off --display-mode replay --rounds 50
+```
+
+Visual play-along example:
+
+```bash
+python main.py --display-mode visual --play-along on --player-name You --rounds 25
 ```
 
 ## Notes

@@ -424,6 +424,116 @@ class LLMPokerAgent(PokerAgent):
         return message
 
 
+class DealerAgent:
+    """Non-playing dealer that validates legality and provides commentary."""
+
+    def __init__(self, name: str = "Dealer", model: str = "qwen2.5:7b", host: str = "http://127.0.0.1:11434") -> None:
+        self.name = name
+        self.model = model
+        self.host = host
+        self._agent: Any | None = None
+
+    def validate_decision(
+        self,
+        decision: Decision,
+        ctx: DecisionContext,
+        raises_made: int,
+        max_raises: int,
+    ) -> tuple[Decision, str | None]:
+        action = decision.action
+        raise_amount = decision.raise_amount
+
+        if action not in {"fold", "call", "check", "raise"}:
+            return Decision(action="fold", raise_amount=0), self._line("Invalid action declared. Hand ruled as fold.")
+
+        if ctx.to_call == 0 and action == "call":
+            return Decision(action="check", raise_amount=0), self._line("Call is not legal with nothing to call. Converted to check.")
+
+        if ctx.to_call > 0 and action == "check":
+            return Decision(action="call", raise_amount=0), self._line("Check is not legal facing a bet. Converted to call.")
+
+        if action == "raise" and raises_made >= max_raises:
+            fallback = "call" if ctx.to_call > 0 else "check"
+            return Decision(action=fallback, raise_amount=0), self._line("Raise cap reached. Action reduced.")
+
+        if action == "raise" and raise_amount < ctx.min_raise:
+            return Decision(action="raise", raise_amount=ctx.min_raise), self._line(
+                f"Minimum raise enforced at {ctx.min_raise}."
+            )
+
+        if action != "raise":
+            raise_amount = 0
+
+        return Decision(action=action, raise_amount=raise_amount), None
+
+    def comment_street(self, street: str, pot: int, board_text: str, active_players: int) -> str:
+        prompt = (
+            "You are a professional poker dealer and commentator. "
+            "Respond with one short line under 20 words. "
+            f"Street={street}; pot={pot}; board={board_text or 'none'}; active_players={active_players}."
+        )
+        generated = self._call_model(prompt)
+        if generated:
+            return generated
+
+        fallback = {
+            "flop": "Flop is out. Board texture now starts telling the story.",
+            "turn": "Turn card dealt. Pressure rises as ranges narrow.",
+            "river": "River is out. Final decisions before showdown.",
+        }
+        return fallback.get(street.lower(), "Action remains live. Dealer watching every move.")
+
+    def comment_showdown(self, winner_names: set[str], pot: int, board_text: str) -> str:
+        names = ", ".join(sorted(winner_names))
+        prompt = (
+            "You are a professional poker dealer. "
+            "Respond with one concise closing line under 20 words. "
+            f"Winners={names}; pot={pot}; board={board_text}."
+        )
+        generated = self._call_model(prompt)
+        if generated:
+            return generated
+        if len(winner_names) == 1:
+            return f"Pot of {pot} pushed to {names}."
+        return f"Split pot awarded to {names}."
+
+    def _ensure_agent(self) -> None:
+        if self._agent is not None:
+            return
+        if AFAgent is None or OllamaChatClient is None:
+            return
+        try:
+            client = OllamaChatClient(model=self.model, host=self.host)
+            self._agent = AFAgent(
+                client=client,
+                instructions="You are a poker dealer. Keep responses short, neutral, and clean.",
+                name=self.name,
+            )
+        except Exception:
+            self._agent = None
+
+    def _call_model(self, prompt: str) -> str | None:
+        self._ensure_agent()
+        if self._agent is None:
+            return None
+
+        async def _invoke() -> str | None:
+            result = await asyncio.wait_for(self._agent.run(prompt), timeout=3.0)
+            text = getattr(result, "text", None)
+            if isinstance(text, str):
+                compact = " ".join(text.split())
+                return compact[:120]
+            return None
+
+        try:
+            return asyncio.run(_invoke())
+        except Exception:
+            return None
+
+    def _line(self, text: str) -> str:
+        return text[:120]
+
+
 def build_default_agents() -> list[PokerAgent]:
     """Build five poker agents backed by five different LLM profiles.
 
@@ -466,3 +576,7 @@ def build_default_agents() -> list[PokerAgent]:
     ]
 
     return [LLMPokerAgent(profile) for profile in profiles]
+
+
+def build_default_dealer_agent() -> DealerAgent:
+    return DealerAgent(name="Dealer", model="qwen2.5:7b", host="http://127.0.0.1:11434")

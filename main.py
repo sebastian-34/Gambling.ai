@@ -5,8 +5,13 @@ from __future__ import annotations
 import argparse
 import sys
 
-from poker.agents import build_default_agents
+from poker.agents import build_default_agents, build_default_dealer_agent
 from poker.game import PokerGame
+
+try:
+	from poker.ui import PokerTableUI
+except Exception:
+	PokerTableUI = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,9 +31,26 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--display-mode",
-		choices=["ask", "live", "replay"],
+		choices=["ask", "live", "replay", "visual"],
 		default="ask",
-		help="Show hands live line-by-line, replay after tournament, or ask at startup",
+		help="Show hands live line-by-line, replay after tournament, visual table UI, or ask at startup",
+	)
+	parser.add_argument(
+		"--play-along",
+		choices=["ask", "on", "off"],
+		default="ask",
+		help="Allow a human seat in the game with hidden opponent cards",
+	)
+	parser.add_argument(
+		"--player-name",
+		default="You",
+		help="Name used for the human seat in play-along mode",
+	)
+	parser.add_argument(
+		"--step-through",
+		choices=["ask", "on", "off"],
+		default="ask",
+		help="In visual mode, advance hand states using a Next button",
 	)
 	return parser.parse_args()
 
@@ -48,18 +70,28 @@ def _prompt_yes_no(question: str, default: bool) -> bool:
 
 def _prompt_display_mode(default: str = "live") -> str:
 	while True:
-		print("Display mode: 1) live line-by-line  2) replay full games after tournament")
-		answer = input("Choose [1/2]: ").strip()
+		print("Display mode: 1) live line-by-line  2) replay after tournament  3) visual table UI")
+		answer = input("Choose [1/2/3]: ").strip()
 		if not answer:
 			return default
 		if answer == "1":
 			return "live"
 		if answer == "2":
 			return "replay"
-		print("Please enter '1' or '2'.")
+		if answer == "3":
+			return "visual"
+		print("Please enter '1', '2', or '3'.")
 
 
-def resolve_runtime_options(args: argparse.Namespace) -> tuple[bool, str]:
+def _prompt_play_along(default: bool = False) -> bool:
+	return _prompt_yes_no("Enable play-along mode (you take one seat)?", default=default)
+
+
+def _prompt_step_through(default: bool = True) -> bool:
+	return _prompt_yes_no("Enable click-through turn stepping?", default=default)
+
+
+def resolve_runtime_options(args: argparse.Namespace) -> tuple[bool, str, bool, bool]:
 	table_talk = True
 	if args.table_talk == "on":
 		table_talk = True
@@ -74,22 +106,53 @@ def resolve_runtime_options(args: argparse.Namespace) -> tuple[bool, str]:
 	elif sys.stdin.isatty():
 		display_mode = _prompt_display_mode(default="live")
 
-	return table_talk, display_mode
+	play_along = False
+	if args.play_along == "on":
+		play_along = True
+	elif args.play_along == "off":
+		play_along = False
+	elif sys.stdin.isatty():
+		play_along = _prompt_play_along(default=False)
+
+	step_through = False
+	if args.step_through == "on":
+		step_through = True
+	elif args.step_through == "off":
+		step_through = False
+	elif sys.stdin.isatty() and display_mode == "visual":
+		step_through = _prompt_step_through(default=True)
+
+	return table_talk, display_mode, play_along, step_through
 
 
 def main() -> None:
 	args = parse_args()
-	table_talk, display_mode = resolve_runtime_options(args)
+	table_talk, display_mode, play_along, step_through = resolve_runtime_options(args)
 	agents = build_default_agents()
+	dealer_agent = build_default_dealer_agent()
+	if play_along and agents:
+		agents[0].name = args.player_name
+
+	table_ui = None
+	if display_mode == "visual" and PokerTableUI is not None:
+		table_ui = PokerTableUI(title="Gambling.ai Table")
+	elif display_mode == "visual" and PokerTableUI is None:
+		print("Visual mode unavailable (tkinter missing). Falling back to live mode.")
+		display_mode = "live"
 	game = PokerGame(
 		agents=agents,
 		starting_stack=args.starting_stack,
 		small_blind=args.small_blind,
 		big_blind=args.big_blind,
 		seed=args.seed,
-		verbose=True,
+		verbose=display_mode != "visual",
 		enable_table_talk=table_talk,
-		output_mode=display_mode,
+		output_mode="live" if display_mode == "visual" else display_mode,
+		table_ui=table_ui,
+		play_along=play_along,
+		human_player_name=args.player_name,
+		dealer_agent=dealer_agent,
+		step_through=step_through,
 	)
 	standings = game.play_tournament(rounds=args.rounds)
 
