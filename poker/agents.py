@@ -59,6 +59,9 @@ class PokerAgent(ABC):
     def speak(self, ctx: DecisionContext, rng: random.Random) -> str:
         return ""
 
+    def action_talk(self, action: str, raise_amount: int, ctx: DecisionContext, rng: random.Random) -> str:
+        return ""
+
     def start_hand(self, hand_number: int, stack: int, opponents: list[str]) -> None:
         return None
 
@@ -86,6 +89,7 @@ class LLMPokerAgent(PokerAgent):
         self._opponent_stats: dict[str, dict[str, int]] = defaultdict(
             lambda: {"raises": 0, "calls": 0, "folds": 0, "chat": 0}
         )
+        self._persona_pack = self._build_persona_pack()
 
     def start_hand(self, hand_number: int, stack: int, opponents: list[str]) -> None:
         self.hand_number = hand_number
@@ -164,6 +168,65 @@ class LLMPokerAgent(PokerAgent):
         if fallback:
             self._last_spoken_event_index = len(self._recent_observations)
         return fallback
+
+    def action_talk(self, action: str, raise_amount: int, ctx: DecisionContext, rng: random.Random) -> str:
+        # Deliberately sparse so table chat feels more natural.
+        base = 0.18 + self._persona_pack["talk_boost"]
+        if action == "raise":
+            base += 0.15
+        if ctx.to_call > 0 and action in {"fold", "call"}:
+            base += 0.05
+        if rng.random() > max(0.08, min(0.5, base)):
+            return ""
+
+        prefix = rng.choice(self._persona_pack["prefixes"])
+        if action == "raise":
+            core = rng.choice(self._persona_pack["raise_lines"]).format(amount=raise_amount)
+        elif action == "call":
+            core = rng.choice(self._persona_pack["call_lines"]).format(amount=ctx.to_call)
+        elif action == "check":
+            core = rng.choice(self._persona_pack["check_lines"])
+        else:
+            core = rng.choice(self._persona_pack["fold_lines"])
+        return " ".join(f"{prefix} {core}".split())[:120]
+
+    def _build_persona_pack(self) -> dict[str, Any]:
+        packs = [
+            {
+                "talk_boost": 0.00,
+                "prefixes": ["Calmly", "Quietly", "Steady now,"],
+                "raise_lines": ["I raise to apply measured pressure: {amount}.", "Raise incoming at {amount}; let's test ranges."],
+                "call_lines": ["I call {amount} and keep the plan intact.", "Calling {amount}; information has value."],
+                "check_lines": ["I check and keep options wide.", "Check. Pot control first."],
+                "fold_lines": ["I fold this one and reset.", "Fold. Better spots ahead."],
+            },
+            {
+                "talk_boost": 0.06,
+                "prefixes": ["Bold move:", "Right then,", "Let's make this loud:"],
+                "raise_lines": ["I raise {amount}. Pressure is the point.", "Raise to {amount}; deny the cheap draws."],
+                "call_lines": ["Call {amount}. I'm not done here.", "I call {amount}; show me more."],
+                "check_lines": ["Check. Trap set, maybe.", "I check and watch reactions."],
+                "fold_lines": ["Fold. You can keep this pot.", "I'm out; next hand is mine."],
+            },
+            {
+                "talk_boost": -0.03,
+                "prefixes": ["Math says:", "Range note:", "Pot odds check:"],
+                "raise_lines": ["Raise {amount}; EV likes this line.", "I raise {amount}; frequencies stay balanced."],
+                "call_lines": ["Call {amount}; threshold still met.", "Calling {amount}; price is acceptable."],
+                "check_lines": ["Check. No need to overextend.", "I check and preserve stack depth."],
+                "fold_lines": ["Fold. Negative edge here.", "I fold; odds no longer justify it."],
+            },
+            {
+                "talk_boost": 0.03,
+                "prefixes": ["Table note:", "Listen up:", "Eyes open,"],
+                "raise_lines": ["Raise to {amount}; let's charge the draws.", "I raise {amount}; story stays consistent."],
+                "call_lines": ["Call {amount}; still inside my lane.", "I call {amount}; not giving this up yet."],
+                "check_lines": ["Check. Keep the tempo honest.", "I check and let the board speak."],
+                "fold_lines": ["Fold. Respecting the signal.", "I'm folding; line doesn't add up."],
+            },
+        ]
+        seed = int(hashlib.sha256(self.profile.name.encode("utf-8")).hexdigest()[:8], 16)
+        return packs[seed % len(packs)]
 
     def _build_personal_context(self) -> str:
         top_opponents = []
@@ -371,7 +434,7 @@ class LLMPokerAgent(PokerAgent):
         model_rng = random.Random(seed + ctx.pot + ctx.to_call + len(ctx.recent_chat) * 7)
 
         # Agents can stay silent based on pressure and tendency.
-        talk_bias = 0.45 + model_rng.random() * 0.25
+        talk_bias = 0.2 + model_rng.random() * 0.2 + self._persona_pack["talk_boost"]
         if ctx.to_call > 0:
             talk_bias -= 0.08
         if ctx.hand_strength > 0.75:
@@ -395,25 +458,32 @@ class LLMPokerAgent(PokerAgent):
             stance = "balanced"
 
         if last_line:
-            response_starts = [
-                "Interesting read.",
-                "Maybe.",
-                "Could be.",
-                "I hear you.",
-            ]
+            response_starts = self._persona_pack["prefixes"]
             opener = response_starts[model_rng.randint(0, len(response_starts) - 1)]
         else:
             opener = ""
 
         if stance == "confident":
-            core = "This texture favors pressure, not hesitation."
+            core = model_rng.choice([
+                "This board rewards pressure.",
+                "I like this texture for aggression.",
+            ])
         elif stance == "deflecting":
-            core = "I'm just navigating ranges and timing here."
+            core = model_rng.choice([
+                "I'm navigating ranges and timing.",
+                "Just managing variance here.",
+            ])
         else:
             if ctx.to_call > 0:
-                core = "Pot odds and tempo matter more than noise."
+                core = model_rng.choice([
+                    "Pot odds matter more than table noise.",
+                    "Tempo and price drive this decision.",
+                ])
             else:
-                core = "Let's see who tells the cleaner story by river."
+                core = model_rng.choice([
+                    "Let's see who tells the cleaner story by river.",
+                    "No rush; the board still has chapters.",
+                ])
 
         message = f"{opener} {core}".strip()
         message = " ".join(message.split())

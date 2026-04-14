@@ -333,6 +333,19 @@ class PokerResultsDashboard:
             header = f"Hand {hand.get('hand_number', index + 1)} | Pot {hand.get('pot', 0)} | Board {board} | Winner {winners}"
             tk.Label(body, text=header, bg=self.PANEL, fg=self.TEXT, font=("Segoe UI", 12, "bold"), wraplength=1460, justify="left").pack(anchor="w")
 
+            hole_cards = hand.get("hole_cards", {})
+            if isinstance(hole_cards, dict) and hole_cards:
+                reveal = " | ".join(f"{name}: {' '.join(cards)}" for name, cards in hole_cards.items())
+                tk.Label(
+                    body,
+                    text=f"Hands: {reveal}",
+                    bg=self.PANEL,
+                    fg=self.MUTED,
+                    font=("Segoe UI", 9),
+                    wraplength=1460,
+                    justify="left",
+                ).pack(anchor="w", pady=(4, 0))
+
             highlight_box = tk.Frame(body, bg=self.PANEL)
             highlight_box.pack(fill="x", pady=(8, 0))
             highlights = hand.get("highlights", [])
@@ -386,21 +399,48 @@ class PokerResultsDashboard:
             tk.Label(self.charts_tab, text="No chart data available.", bg=self.BG, fg=self.MUTED).pack(pady=18)
             return
 
-        top = tk.Canvas(self.charts_tab, bg=self.PANEL, height=300, highlightthickness=1, highlightbackground="#E5E7EB")
-        top.pack(fill="x", padx=14, pady=(14, 10))
-        self._draw_line_chart(top, title="Chip stack over time", series=self._chip_series(), labels=[str(hand.get("hand", index + 1)) for index, hand in enumerate(self.pot_history)])
+        chip_series = self._chip_series()
+        labels = [str(hand.get("hand", index + 1)) for index, hand in enumerate(self.pot_history)]
+
+        top = tk.Canvas(self.charts_tab, bg=self.PANEL, height=360, highlightthickness=1, highlightbackground="#E5E7EB")
+        top.pack(fill="both", expand=True, padx=14, pady=(14, 10))
+        top.bind("<Configure>", lambda _event: self._draw_line_chart(top, title="Chip stack over time", series=chip_series, labels=labels))
 
         bottom = tk.Frame(self.charts_tab, bg=self.BG)
         bottom.pack(fill="both", expand=True, padx=14, pady=(0, 14))
 
-        left = tk.Canvas(bottom, bg=self.PANEL, height=260, highlightthickness=1, highlightbackground="#E5E7EB")
+        left = tk.Canvas(bottom, bg=self.PANEL, height=320, highlightthickness=1, highlightbackground="#E5E7EB")
         left.pack(side="left", fill="both", expand=True, padx=(0, 8))
-        self._draw_bar_chart(left, [str(hand.get("hand", index + 1)) for index, hand in enumerate(self.pot_history)], [hand.get("pot", 0) for hand in self.pot_history], [self.INDIGO] * max(1, len(self.pot_history)), title="Pot size by hand")
+        left.bind(
+            "<Configure>",
+            lambda _event: self._draw_bar_chart(
+                left,
+                labels,
+                [hand.get("pot", 0) for hand in self.pot_history],
+                [self.INDIGO] * max(1, len(self.pot_history)),
+                title="Pot size by hand",
+            ),
+        )
 
-        right = tk.Canvas(bottom, bg=self.PANEL, height=260, highlightthickness=1, highlightbackground="#E5E7EB")
+        right = tk.Canvas(bottom, bg=self.PANEL, height=320, highlightthickness=1, highlightbackground="#E5E7EB")
         right.pack(side="right", fill="both", expand=True, padx=(8, 0))
         volatility_rows = [(row["name"], row["volatility"]) for row in self.leaderboard]
-        self._draw_horizontal_bars(right, volatility_rows, title="Volatility by player")
+        right.bind("<Configure>", lambda _event: self._draw_horizontal_bars(right, volatility_rows, title="Volatility by player"))
+
+        self.root.after(
+            50,
+            lambda: (
+                self._draw_line_chart(top, title="Chip stack over time", series=chip_series, labels=labels),
+                self._draw_bar_chart(
+                    left,
+                    labels,
+                    [hand.get("pot", 0) for hand in self.pot_history],
+                    [self.INDIGO] * max(1, len(self.pot_history)),
+                    title="Pot size by hand",
+                ),
+                self._draw_horizontal_bars(right, volatility_rows, title="Volatility by player"),
+            ),
+        )
 
     def _build_summary_tab(self) -> None:
         frame = self._panel(
@@ -452,8 +492,8 @@ class PokerResultsDashboard:
 
     def _draw_line_chart(self, canvas: tk.Canvas, title: str, series: dict[str, list[float]], labels: list[str]) -> None:
         canvas.delete("all")
-        width = int(canvas.cget("width") or canvas.winfo_reqwidth())
-        height = int(canvas.cget("height") or canvas.winfo_reqheight())
+        width = max(int(canvas.cget("width") or 0), canvas.winfo_width(), canvas.winfo_reqwidth(), 400)
+        height = max(int(canvas.cget("height") or 0), canvas.winfo_height(), canvas.winfo_reqheight(), 260)
         pad_left, pad_right, pad_top, pad_bottom = 72, 28, 42, 48
         canvas.create_text(20, 18, text=title, anchor="w", fill=self.TEXT, font=("Segoe UI", 13, "bold"))
 
@@ -482,9 +522,11 @@ class PokerResultsDashboard:
             canvas.create_line(pad_left, y, width - pad_right, y, fill="#EEF2F7")
             canvas.create_text(12, y, text=f"{int(value)}", anchor="w", fill=self.MUTED, font=("Segoe UI", 9))
 
-        for index, label in enumerate(labels[:20]):
+        tick_count = min(12, len(labels))
+        tick_step = max(1, len(labels) // max(1, tick_count))
+        for index in range(0, len(labels), tick_step):
             x = pad_left + index * step
-            canvas.create_text(x, height - pad_bottom + 18, text=label, fill=self.MUTED, font=("Segoe UI", 9))
+            canvas.create_text(x, height - pad_bottom + 18, text=labels[index], fill=self.MUTED, font=("Segoe UI", 9))
 
         legend_x = width - 260
         legend_y = 16
@@ -510,8 +552,8 @@ class PokerResultsDashboard:
         title: str,
     ) -> None:
         canvas.delete("all")
-        width = int(canvas.cget("width") or canvas.winfo_reqwidth())
-        height = int(canvas.cget("height") or canvas.winfo_reqheight())
+        width = max(int(canvas.cget("width") or 0), canvas.winfo_width(), canvas.winfo_reqwidth(), 360)
+        height = max(int(canvas.cget("height") or 0), canvas.winfo_height(), canvas.winfo_reqheight(), 240)
         canvas.create_text(20, 18, text=title, anchor="w", fill=self.TEXT, font=("Segoe UI", 13, "bold"))
         if not values:
             canvas.create_text(width / 2, height / 2, text="No chart data.", fill=self.MUTED, font=("Segoe UI", 11))
@@ -527,6 +569,7 @@ class PokerResultsDashboard:
         canvas.create_line(pad_left, pad_top, pad_left, height - pad_bottom, fill="#CBD5E1", width=2)
         canvas.create_line(pad_left, height - pad_bottom, width - pad_right, height - pad_bottom, fill="#CBD5E1", width=2)
 
+        show_every = max(1, len(labels) // 14)
         for index, (label, value) in enumerate(zip(labels, values)):
             x1 = pad_left + gap + index * (bar_width + gap)
             x2 = x1 + bar_width
@@ -534,8 +577,9 @@ class PokerResultsDashboard:
             y1 = height - pad_bottom - bar_height
             color = colors[index % len(colors)]
             canvas.create_rectangle(x1, y1, x2, height - pad_bottom, fill=color, outline=color)
-            canvas.create_text((x1 + x2) / 2, y1 - 10, text=str(int(value)), fill=self.TEXT, font=("Segoe UI", 9, "bold"))
-            canvas.create_text((x1 + x2) / 2, height - pad_bottom + 18, text=label[:8], fill=self.MUTED, font=("Segoe UI", 8))
+            if index % show_every == 0:
+                canvas.create_text((x1 + x2) / 2, y1 - 10, text=str(int(value)), fill=self.TEXT, font=("Segoe UI", 9, "bold"))
+                canvas.create_text((x1 + x2) / 2, height - pad_bottom + 20, text=label[:10], fill=self.MUTED, font=("Segoe UI", 8), angle=30)
 
     def _draw_horizontal_bars(self, canvas: tk.Canvas, rows: list[tuple[str, float]], title: str) -> None:
         canvas.delete("all")

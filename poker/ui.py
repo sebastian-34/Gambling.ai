@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import textwrap
 import tkinter as tk
 from tkinter import simpledialog
 from typing import Any
@@ -75,6 +76,45 @@ class PokerTableUI:
         self.canvas.create_rectangle(left, top, right, bottom, fill=fill, outline="#ECF0F1", width=2)
         for tid in text_ids:
             self.canvas.tag_raise(tid)
+
+    def _draw_speech_bubble(self, x: float, y: float, text: str) -> None:
+        wrapped = textwrap.fill(text[:120], width=28)
+        text_id = self.canvas.create_text(
+            x,
+            y,
+            text=wrapped,
+            font=("Consolas", 10),
+            fill="#1B2631",
+            justify="center",
+        )
+        bbox = self.canvas.bbox(text_id)
+        if not bbox:
+            return
+        left = bbox[0] - 12
+        top = bbox[1] - 8
+        right = bbox[2] + 12
+        bottom = bbox[3] + 8
+        self.canvas.create_rectangle(
+            left,
+            top,
+            right,
+            bottom,
+            fill="#FCFCFD",
+            outline="#AAB7B8",
+            width=2,
+        )
+        self.canvas.create_polygon(
+            x - 10,
+            bottom,
+            x + 10,
+            bottom,
+            x,
+            bottom + 10,
+            fill="#FCFCFD",
+            outline="#AAB7B8",
+            width=2,
+        )
+        self.canvas.tag_raise(text_id)
 
     def _draw_avatar(self, x: float, y: float, style: dict[str, str], is_actor: bool) -> None:
         self.canvas.create_oval(x - 20, y - 44, x + 20, y - 4, fill=style["skin"], outline="#17202A", width=2)
@@ -180,25 +220,7 @@ class PokerTableUI:
 
             if name in self._speech and self._speech[name]:
                 bubble_text = self._speech[name][:80]
-                text_id = self.canvas.create_text(
-                    x + 20,
-                    y - 98,
-                    text=bubble_text,
-                    font=("Consolas", 10),
-                    fill="#1B2631",
-                )
-                bbox = self.canvas.bbox(text_id)
-                if bbox:
-                    self.canvas.create_rectangle(
-                        bbox[0] - 10,
-                        bbox[1] - 6,
-                        bbox[2] + 10,
-                        bbox[3] + 6,
-                        fill="#FBFCFC",
-                        outline="#BDC3C7",
-                        width=1,
-                    )
-                    self.canvas.tag_raise(text_id)
+                self._draw_speech_bubble(x + 20, y - 98, bubble_text)
 
         # Physical dealer with a cool hat.
         dealer_x = 550
@@ -210,25 +232,7 @@ class PokerTableUI:
         self.canvas.create_rectangle(dealer_x - 24, dealer_y - 94, dealer_x + 24, dealer_y - 88, fill="#F1C40F", outline="#F1C40F")
         self._draw_text_box(dealer_x + 170, dealer_y - 40, [dealer_name], fill="#1B2631", text_fill="#F7DC6F")
         if dealer_message:
-            text_id = self.canvas.create_text(
-                dealer_x + 170,
-                dealer_y - 88,
-                text=dealer_message[:100],
-                font=("Consolas", 10),
-                fill="#1B2631",
-            )
-            bbox = self.canvas.bbox(text_id)
-            if bbox:
-                self.canvas.create_rectangle(
-                    bbox[0] - 10,
-                    bbox[1] - 6,
-                    bbox[2] + 10,
-                    bbox[3] + 6,
-                    fill="#FBFCFC",
-                    outline="#BDC3C7",
-                    width=1,
-                )
-                self.canvas.tag_raise(text_id)
+            self._draw_speech_bubble(dealer_x + 170, dealer_y - 88, dealer_message)
 
         self.root.update_idletasks()
         self.root.update()
