@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections import defaultdict
 import random
 import sys
+import statistics
 from typing import Any
 
 from .agents import DealerAgent, Decision, DecisionContext, PokerAgent
@@ -72,16 +74,267 @@ class PokerGame:
         self.dealer_agent = dealer_agent
         self.step_through = step_through
         self._dealer_line = "Ready to deal."
+        self._hand_history: list[dict[str, Any]] = []
+        self._chip_history: list[dict[str, int]] = []
+        self._pot_history: list[dict[str, Any]] = []
+        self._table_talk_reactions: dict[str, int] = {"fold": 0, "call": 0, "raise": 0}
+        self._pending_chat: dict[str, Any] | None = None
+        self._current_hand_record: dict[str, Any] | None = None
+        self._player_stats: dict[str, dict[str, Any]] = {
+            player.name: {
+                "name": player.name,
+                "starting_stack": player.stack,
+                "final_chips": player.stack,
+                "hands_played": 0,
+                "hands_won": 0,
+                "net_profit": 0,
+                "decision_count": 0,
+                "fold_count": 0,
+                "call_count": 0,
+                "check_count": 0,
+                "raise_count": 0,
+                "big_raise_count": 0,
+                "bluff_attempts": 0,
+                "bluff_successes": 0,
+                "showdown_entries": 0,
+                "showdown_wins": 0,
+                "pressure_spots": 0,
+                "pressure_wins": 0,
+                "preflop_wins": 0,
+                "preflop_raises": 0,
+                "hand_deltas": [],
+                "recovery_samples": [],
+                "pressure_hands": 0,
+            }
+            for player in self.players
+        }
 
-        if self.output_mode not in {"live", "replay"}:
-            raise ValueError("output_mode must be 'live' or 'replay'.")
+        if self.output_mode not in {"live", "replay", "dashboard"}:
+            raise ValueError("output_mode must be 'live', 'replay', or 'dashboard'.")
 
     def _log(self, message: str) -> None:
-        if self.output_mode == "replay":
+        if self.output_mode in {"replay", "dashboard"}:
             self._replay_log.append(message)
             return
         if self.verbose:
             print(message)
+
+    def _new_hand_record(self) -> dict[str, Any]:
+        return {
+            "hand_number": self.round_number,
+            "events": [],
+            "chat": [],
+            "highlights": [],
+            "winner_names": [],
+            "board": [],
+            "pot": 0,
+            "ended_by_fold": False,
+            "showdown": False,
+            "street": "preflop",
+            "pressure_seen": set(),
+        }
+
+    def _record_chat(self, street: str, speaker: str, message: str, pot: int) -> None:
+        if self._current_hand_record is None:
+            return
+
+        line = f"{speaker}: {message}"
+        chat_entry = {
+            "kind": "chat",
+            "street": street,
+            "speaker": speaker,
+            "message": message,
+            "text": line,
+            "pot": pot,
+        }
+        self._current_hand_record["chat"].append(chat_entry)
+        self._current_hand_record["events"].append(chat_entry)
+        self._pending_chat = {"speaker": speaker, "street": street, "message": message}
+
+    def _record_action(
+        self,
+        *,
+        street: str,
+        player_name: str,
+        action: str,
+        amount: int,
+        to_call: int,
+        pot_before: int,
+        pot_after: int,
+        stack_before: int,
+        stack_after: int,
+        hand_strength: float,
+        min_raise: int,
+    ) -> None:
+        if self._current_hand_record is None:
+            return
+
+        stats = self._player_stats[player_name]
+        stats["decision_count"] += 1
+        if action == "fold":
+            stats["fold_count"] += 1
+        elif action == "call":
+            stats["call_count"] += 1
+        elif action == "check":
+            stats["check_count"] += 1
+        elif action == "raise":
+            stats["raise_count"] += 1
+            if street == "preflop":
+                stats["preflop_raises"] += 1
+            if amount >= max(self.big_blind * 3, min_raise * 2, max(10, pot_before // 2)):
+                stats["big_raise_count"] += 1
+
+        if action == "raise" and hand_strength < 0.45:
+            stats["bluff_attempts"] += 1
+
+        pressure = to_call > 0 and (to_call >= max(1, stack_before // 5) or street in {"turn", "river"})
+        if pressure:
+            stats["pressure_spots"] += 1
+            self._current_hand_record["pressure_seen"].add(player_name)
+
+        event = {
+            "kind": "action",
+            "street": street,
+            "player": player_name,
+            "action": action,
+            "amount": amount,
+            "to_call": to_call,
+            "pot_before": pot_before,
+            "pot_after": pot_after,
+            "stack_before": stack_before,
+            "stack_after": stack_after,
+            "hand_strength": hand_strength,
+            "text": "",
+        }
+
+        if action == "raise" and amount >= max(self.big_blind * 3, min_raise * 2, max(10, pot_before // 2)):
+            event["kind"] = "big_raise"
+            event["text"] = f"BIG RAISE: {player_name} commits {amount} chips"
+            self._current_hand_record["highlights"].append(event)
+        elif action == "fold" and pressure:
+            event["kind"] = "pressure_fold"
+            event["text"] = f"PRESSURE FOLD: {player_name} folds facing {to_call}"
+            self._current_hand_record["highlights"].append(event)
+
+        self._current_hand_record["events"].append(event)
+
+        if self._pending_chat and self._pending_chat["speaker"] != player_name:
+            if action in self._table_talk_reactions:
+                self._table_talk_reactions[action] += 1
+            self._pending_chat = None
+
+    def _finalize_hand_record(
+        self,
+        *,
+        ordered_players: list[PlayerState],
+        hand_start_stacks: dict[str, int],
+        winner_names: set[str],
+        community_cards: list[Card],
+        pot: int,
+        ended_by_fold: bool,
+    ) -> None:
+        if self._current_hand_record is None:
+            return
+
+        record = dict(self._current_hand_record)
+        record["winner_names"] = sorted(winner_names)
+        record["board"] = [str(card) for card in community_cards]
+        record["pot"] = pot
+        record["ended_by_fold"] = ended_by_fold
+        record["showdown"] = not ended_by_fold and len(winner_names) > 0
+        record["pressure_seen"] = sorted(record.get("pressure_seen", []))
+        self._hand_history.append(record)
+
+        for player in ordered_players:
+            stats = self._player_stats[player.name]
+            start_stack = hand_start_stacks.get(player.name, player.stack)
+            delta = player.stack - start_stack
+            stats["final_chips"] = player.stack
+            stats["hands_played"] += 1
+            stats["net_profit"] += delta
+            stats["hand_deltas"].append(delta)
+            if self._current_hand_record["showdown"] and player.name not in winner_names and not player.folded:
+                stats["showdown_entries"] += 1
+            elif self._current_hand_record["showdown"] and player.name in winner_names:
+                stats["showdown_entries"] += 1
+                stats["showdown_wins"] += 1
+            if player.name in self._current_hand_record["pressure_seen"] and player.name in winner_names:
+                stats["pressure_wins"] += 1
+            if player.name in winner_names:
+                stats["hands_won"] += 1
+                if ended_by_fold and self._current_street == "preflop":
+                    stats["preflop_wins"] += 1
+            if delta > 0 and len(stats["hand_deltas"]) > 1:
+                previous_delta = stats["hand_deltas"][-2]
+                if previous_delta < 0:
+                    stats["recovery_samples"].append(delta)
+            if player.name in self._current_hand_record["pressure_seen"]:
+                stats["pressure_hands"] += 1
+            if player.name in winner_names and stats["bluff_attempts"] > stats["bluff_successes"]:
+                if any(
+                    event.get("kind") == "big_raise" and event.get("player") == player.name
+                    for event in self._current_hand_record["events"]
+                ) or any(
+                    event.get("kind") == "action" and event.get("player") == player.name and event.get("action") == "raise" and event.get("hand_strength", 1.0) < 0.45
+                    for event in self._current_hand_record["events"]
+                ):
+                    stats["bluff_successes"] += 1
+
+        self._chip_history.append({player.name: player.stack for player in ordered_players})
+        self._pot_history.append({"hand": self.round_number, "pot": pot})
+        self._pending_chat = None
+        self._current_hand_record = None
+
+    def get_tournament_report(self) -> dict[str, Any]:
+        players: list[dict[str, Any]] = []
+        for name, stats in self._player_stats.items():
+            hands_played = max(1, stats["hands_played"])
+            decision_count = max(1, stats["decision_count"])
+            bluff_attempts = max(1, stats["bluff_attempts"])
+            showdown_entries = max(1, stats["showdown_entries"])
+            pressure_spots = max(1, stats["pressure_spots"])
+            recovery_samples = stats["recovery_samples"]
+            players.append(
+                {
+                    "name": name,
+                    "final_chips": stats["final_chips"],
+                    "hands_played": stats["hands_played"],
+                    "hands_won": stats["hands_won"],
+                    "net_profit": stats["net_profit"],
+                    "net_profit_per_hand": stats["net_profit"] / hands_played,
+                    "aggression_rate": stats["raise_count"] / decision_count,
+                    "fold_rate": stats["fold_count"] / decision_count,
+                    "raise_frequency": stats["raise_count"] / hands_played,
+                    "showdown_win_rate": stats["showdown_wins"] / showdown_entries,
+                    "bluff_success_rate": stats["bluff_successes"] / bluff_attempts,
+                    "pressure_success_rate": stats["pressure_wins"] / pressure_spots,
+                    "big_raise_count": stats["big_raise_count"],
+                    "preflop_wins": stats["preflop_wins"],
+                    "preflop_raises": stats["preflop_raises"],
+                    "recovery_score": (sum(recovery_samples) / len(recovery_samples)) if recovery_samples else 0.0,
+                    "volatility": statistics.pstdev(stats["hand_deltas"]) if len(stats["hand_deltas"]) > 1 else 0.0,
+                }
+            )
+
+        players.sort(key=lambda row: row["final_chips"], reverse=True)
+
+        summary = {
+            "preflop_dominator": max(players, key=lambda row: (row["preflop_wins"], row["preflop_raises"], row["aggression_rate"]), default=None),
+            "recovery_leader": max(players, key=lambda row: (row["recovery_score"], row["net_profit"], row["final_chips"]), default=None),
+            "pressure_leader": max(players, key=lambda row: (row["pressure_success_rate"], row["showdown_win_rate"], row["final_chips"]), default=None),
+            "biggest_pot": max((entry["pot"] for entry in self._pot_history), default=0),
+            "hands_played": self.round_number,
+        }
+
+        return {
+            "leaderboard": players,
+            "hand_history": list(self._hand_history),
+            "table_talk": dict(self._table_talk_reactions),
+            "chip_history": list(self._chip_history),
+            "pot_history": list(self._pot_history),
+            "summary": summary,
+            "replay_text": self.get_replay_text(),
+        }
 
     def _render_table(self, current_actor: str | None = None) -> None:
         if not self.table_ui:
@@ -270,6 +523,7 @@ class PokerGame:
                     if user_chat:
                         line = f"{player.name}: {user_chat}"
                         self._log(f"  {line}")
+                        self._record_chat(street, player.name, user_chat, pot)
                         self._append_chat(hand_chat, line)
                 decision = self._prompt_human_decision(ctx)
             else:
@@ -286,9 +540,23 @@ class PokerGame:
                     self._dealer_say(dealer_note)
 
             if decision.action == "fold":
+                stack_before = player.stack
                 player.folded = True
                 self._log(f"{player.name:<12} folds")
                 self._append_chat(hand_chat, f"{player.name} folds.")
+                self._record_action(
+                    street=street,
+                    player_name=player.name,
+                    action="fold",
+                    amount=0,
+                    to_call=to_call,
+                    pot_before=pot,
+                    pot_after=pot,
+                    stack_before=stack_before,
+                    stack_after=player.stack,
+                    hand_strength=strength,
+                    min_raise=min_raise,
+                )
                 self._render_table()
                 continue
 
@@ -296,23 +564,64 @@ class PokerGame:
                 decision.action = "call" if to_call > 0 else "check"
 
             if decision.action in {"call", "check"}:
+                stack_before = player.stack
                 if to_call > 0:
                     if player.stack < to_call:
                         player.folded = True
                         self._log(f"{player.name:<12} folds (insufficient chips to call)")
+                        self._record_action(
+                            street=street,
+                            player_name=player.name,
+                            action="fold",
+                            amount=0,
+                            to_call=to_call,
+                            pot_before=pot,
+                            pot_after=pot,
+                            stack_before=stack_before,
+                            stack_after=player.stack,
+                            hand_strength=strength,
+                            min_raise=min_raise,
+                        )
                         continue
                     player.stack -= to_call
                     player.current_bet += to_call
                     pot += to_call
                     self._log(f"{player.name:<12} calls {to_call}")
                     self._append_chat(hand_chat, f"{player.name} calls {to_call}.")
+                    self._record_action(
+                        street=street,
+                        player_name=player.name,
+                        action="call",
+                        amount=to_call,
+                        to_call=to_call,
+                        pot_before=pot - to_call,
+                        pot_after=pot,
+                        stack_before=stack_before,
+                        stack_after=player.stack,
+                        hand_strength=strength,
+                        min_raise=min_raise,
+                    )
                 else:
                     self._log(f"{player.name:<12} checks")
                     self._append_chat(hand_chat, f"{player.name} checks.")
+                    self._record_action(
+                        street=street,
+                        player_name=player.name,
+                        action="check",
+                        amount=0,
+                        to_call=0,
+                        pot_before=pot,
+                        pot_after=pot,
+                        stack_before=stack_before,
+                        stack_after=player.stack,
+                        hand_strength=strength,
+                        min_raise=min_raise,
+                    )
                 self._render_table()
                 continue
 
             if decision.action == "raise":
+                stack_before = player.stack
                 raise_amount = max(min_raise, decision.raise_amount)
                 target_bet = current_bet + raise_amount
                 to_put = target_bet - player.current_bet
@@ -324,13 +633,52 @@ class PokerGame:
                         pot += to_call
                         self._log(f"{player.name:<12} calls {to_call}")
                         self._append_chat(hand_chat, f"{player.name} calls {to_call}.")
+                        self._record_action(
+                            street=street,
+                            player_name=player.name,
+                            action="call",
+                            amount=to_call,
+                            to_call=to_call,
+                            pot_before=pot - to_call,
+                            pot_after=pot,
+                            stack_before=stack_before,
+                            stack_after=player.stack,
+                            hand_strength=strength,
+                            min_raise=min_raise,
+                        )
                     elif to_call == 0:
                         self._log(f"{player.name:<12} checks")
                         self._append_chat(hand_chat, f"{player.name} checks.")
+                        self._record_action(
+                            street=street,
+                            player_name=player.name,
+                            action="check",
+                            amount=0,
+                            to_call=0,
+                            pot_before=pot,
+                            pot_after=pot,
+                            stack_before=stack_before,
+                            stack_after=player.stack,
+                            hand_strength=strength,
+                            min_raise=min_raise,
+                        )
                     else:
                         player.folded = True
                         self._log(f"{player.name:<12} folds (insufficient chips)")
                         self._append_chat(hand_chat, f"{player.name} folds under pressure.")
+                        self._record_action(
+                            street=street,
+                            player_name=player.name,
+                            action="fold",
+                            amount=0,
+                            to_call=to_call,
+                            pot_before=pot,
+                            pot_after=pot,
+                            stack_before=stack_before,
+                            stack_after=player.stack,
+                            hand_strength=strength,
+                            min_raise=min_raise,
+                        )
                     self._render_table()
                     continue
 
@@ -341,14 +689,41 @@ class PokerGame:
                 raises_made += 1
                 self._log(f"{player.name:<12} raises to {current_bet}")
                 self._append_chat(hand_chat, f"{player.name} raises to {current_bet}.")
+                self._record_action(
+                    street=street,
+                    player_name=player.name,
+                    action="raise",
+                    amount=to_put,
+                    to_call=to_call,
+                    pot_before=pot - to_put,
+                    pot_after=pot,
+                    stack_before=stack_before,
+                    stack_after=player.stack,
+                    hand_strength=strength,
+                    min_raise=min_raise,
+                )
                 self._render_table()
 
                 action_queue = [p for p in ordered_players if not p.folded and p is not player]
                 continue
 
+            stack_before = player.stack
             player.folded = True
             self._log(f"{player.name:<12} folds (invalid action)")
             self._append_chat(hand_chat, f"{player.name} folds after a bad read.")
+            self._record_action(
+                street=street,
+                player_name=player.name,
+                action="fold",
+                amount=0,
+                to_call=to_call,
+                pot_before=pot,
+                pot_after=pot,
+                stack_before=stack_before,
+                stack_after=player.stack,
+                hand_strength=strength,
+                min_raise=min_raise,
+            )
             self._render_table()
 
         return pot
@@ -412,6 +787,7 @@ class PokerGame:
                 continue
             line = f"{player.name}: {message}"
             self._log(f"  {line}")
+            self._record_chat(street, player.name, message, pot)
             self._append_chat(hand_chat, line)
 
     def _showdown(
@@ -423,6 +799,14 @@ class PokerGame:
             winner.stack += pot
             self._log(f"Winner by fold: {winner.name} wins {pot}")
             self._broadcast_event(f"Showdown winner: {winner.name}")
+            if self._current_hand_record is not None:
+                self._current_hand_record["highlights"].append(
+                    {
+                        "kind": "showdown_winner",
+                        "text": f"SHOWDOWN WINNER: {winner.name} wins {pot}",
+                        "player": winner.name,
+                    }
+                )
             return {winner.name}
 
         scored: list[tuple[PlayerState, tuple[int, tuple[int, ...]]]] = []
@@ -452,6 +836,16 @@ class PokerGame:
             self._log(f"Split pot ({pot}) among: {names}")
             self._broadcast_event(f"Split pot winners: {names}")
 
+        if self._current_hand_record is not None:
+            winner_label = ", ".join(w.name for w in winners)
+            self._current_hand_record["highlights"].append(
+                {
+                    "kind": "showdown_winner",
+                    "text": f"SHOWDOWN WINNER: {winner_label} take {pot}",
+                    "player": winner_label,
+                }
+            )
+
         if self.dealer_agent:
             line = self.dealer_agent.comment_showdown(
                 winner_names={w.name for w in winners},
@@ -468,6 +862,8 @@ class PokerGame:
         self._current_street = "preflop"
         self._community_cards = []
         self._pot = 0
+        self._current_hand_record = self._new_hand_record()
+        self._pending_chat = None
         if self.table_ui:
             self.table_ui.clear_speech()
         self._dealer_line = "Shuffling up and dealing."
@@ -511,6 +907,14 @@ class PokerGame:
         self._step_wait("Preflop complete")
         if len([p for p in ordered_players if not p.folded]) <= 1:
             winner_names = self._showdown(ordered_players, community_cards, pot)
+            self._finalize_hand_record(
+                ordered_players=ordered_players,
+                hand_start_stacks=hand_start_stacks,
+                winner_names=winner_names,
+                community_cards=community_cards,
+                pot=pot,
+                ended_by_fold=True,
+            )
             self._finalize_hand_memory(ordered_players, hand_start_stacks, winner_names)
             self.dealer_idx = (self.dealer_idx + 1) % len(self.players)
             return
@@ -539,6 +943,14 @@ class PokerGame:
         self._step_wait("Flop action complete")
         if len([p for p in ordered_players if not p.folded]) <= 1:
             winner_names = self._showdown(ordered_players, community_cards, pot)
+            self._finalize_hand_record(
+                ordered_players=ordered_players,
+                hand_start_stacks=hand_start_stacks,
+                winner_names=winner_names,
+                community_cards=community_cards,
+                pot=pot,
+                ended_by_fold=True,
+            )
             self._finalize_hand_memory(ordered_players, hand_start_stacks, winner_names)
             self.dealer_idx = (self.dealer_idx + 1) % len(self.players)
             return
@@ -567,6 +979,14 @@ class PokerGame:
         self._step_wait("Turn action complete")
         if len([p for p in ordered_players if not p.folded]) <= 1:
             winner_names = self._showdown(ordered_players, community_cards, pot)
+            self._finalize_hand_record(
+                ordered_players=ordered_players,
+                hand_start_stacks=hand_start_stacks,
+                winner_names=winner_names,
+                community_cards=community_cards,
+                pot=pot,
+                ended_by_fold=True,
+            )
             self._finalize_hand_memory(ordered_players, hand_start_stacks, winner_names)
             self.dealer_idx = (self.dealer_idx + 1) % len(self.players)
             return
@@ -595,6 +1015,14 @@ class PokerGame:
         self._step_wait("River action complete")
 
         winner_names = self._showdown(ordered_players, community_cards, pot)
+        self._finalize_hand_record(
+            ordered_players=ordered_players,
+            hand_start_stacks=hand_start_stacks,
+            winner_names=winner_names,
+            community_cards=community_cards,
+            pot=pot,
+            ended_by_fold=False,
+        )
         self._finalize_hand_memory(ordered_players, hand_start_stacks, winner_names)
 
         self.dealer_idx = (self.dealer_idx + 1) % len(self.players)

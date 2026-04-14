@@ -6,6 +6,10 @@ import argparse
 import sys
 
 from poker.agents import build_default_agents, build_default_dealer_agent
+try:
+	from poker.dashboard import PokerResultsDashboard
+except Exception:
+	PokerResultsDashboard = None
 from poker.game import PokerGame
 
 try:
@@ -31,9 +35,9 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--display-mode",
-		choices=["ask", "live", "replay", "visual"],
+		choices=["ask", "live", "replay", "visual", "dashboard"],
 		default="ask",
-		help="Show hands live line-by-line, replay after tournament, visual table UI, or ask at startup",
+		help="Show hands live line-by-line, replay after tournament, visual table UI, dashboard, or ask at startup",
 	)
 	parser.add_argument(
 		"--play-along",
@@ -70,8 +74,8 @@ def _prompt_yes_no(question: str, default: bool) -> bool:
 
 def _prompt_display_mode(default: str = "live") -> str:
 	while True:
-		print("Display mode: 1) live line-by-line  2) replay after tournament  3) visual table UI")
-		answer = input("Choose [1/2/3]: ").strip()
+		print("Display mode: 1) live line-by-line  2) replay after tournament  3) visual table UI  4) results dashboard")
+		answer = input("Choose [1/2/3/4]: ").strip()
 		if not answer:
 			return default
 		if answer == "1":
@@ -80,7 +84,9 @@ def _prompt_display_mode(default: str = "live") -> str:
 			return "replay"
 		if answer == "3":
 			return "visual"
-		print("Please enter '1', '2', or '3'.")
+		if answer == "4":
+			return "dashboard"
+		print("Please enter '1', '2', '3', or '4'.")
 
 
 def _prompt_play_along(default: bool = False) -> bool:
@@ -101,7 +107,7 @@ def resolve_runtime_options(args: argparse.Namespace) -> tuple[bool, str, bool, 
 		table_talk = _prompt_yes_no("Enable agent table talk?", default=True)
 
 	display_mode = "live"
-	if args.display_mode in {"live", "replay"}:
+	if args.display_mode in {"live", "replay", "visual", "dashboard"}:
 		display_mode = args.display_mode
 	elif sys.stdin.isatty():
 		display_mode = _prompt_display_mode(default="live")
@@ -145,7 +151,7 @@ def main() -> None:
 		small_blind=args.small_blind,
 		big_blind=args.big_blind,
 		seed=args.seed,
-		verbose=display_mode != "visual",
+		verbose=display_mode not in {"visual", "dashboard"},
 		enable_table_talk=table_talk,
 		output_mode="live" if display_mode == "visual" else display_mode,
 		table_ui=table_ui,
@@ -162,6 +168,13 @@ def main() -> None:
 			print("\nTournament Replay")
 			print("=" * 40)
 			print(replay)
+
+	if display_mode == "dashboard":
+		report = game.get_tournament_report()
+		if PokerResultsDashboard is not None:
+			PokerResultsDashboard(report, title="Gambling.ai Tournament Results").show()
+		else:
+			print("Dashboard UI unavailable. Results were still collected.")
 
 	print("\nFinal Standings")
 	print("=" * 40)

@@ -51,15 +51,29 @@ Optional flags:
 - `--small-blind 5`
 - `--big-blind 10`
 - `--table-talk ask|on|off`
-- `--display-mode ask|live|replay|visual`
+- `--display-mode ask|live|replay|visual|dashboard`
 - `--play-along ask|on|off`
 - `--player-name You`
 - `--step-through ask|on|off`
+
+Dashboard mode opens a tabbed results window with:
+- final leaderboard
+- per-agent stat cards
+- replay highlights
+- table-talk impact
+- chip, pot, and volatility charts
+- a match-summary page
 
 Example (no startup prompts):
 
 ```bash
 python main.py --table-talk off --display-mode replay --rounds 50
+```
+
+Example dashboard run:
+
+```bash
+python main.py --display-mode dashboard --rounds 50
 ```
 
 Visual play-along example:
