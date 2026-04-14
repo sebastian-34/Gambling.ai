@@ -22,6 +22,7 @@ class PokerTableUI:
         self.step_label.pack(side=tk.LEFT, padx=10, pady=8)
         self.next_button = tk.Button(controls, text="Next", width=14, command=self._advance_step)
         self.next_button.pack(side=tk.RIGHT, padx=12, pady=6)
+        self.next_button.config(state=tk.DISABLED)
         self._step_var = tk.BooleanVar(value=False)
         self._speech: dict[str, str] = {}
 

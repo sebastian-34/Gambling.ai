@@ -8,6 +8,13 @@ This project simulates a 5-player Texas Hold'em table where each player is contr
 - In play-along mode, opponent hole cards are hidden while your cards remain visible.
 - You can optionally send a chat line before choosing your action.
 
+## New Features (Phase 2)
+- Sixth non-playing dealer agent that validates action legality.
+- Dealer commentary on flop, turn, river, and end-of-hand outcomes.
+- Physical dealer avatar rendered at the table with a signature hat.
+- Distinct visual features per player avatar (different apparel/headwear).
+- Click-through stepping mode in visual display so each phase can be advanced with Next.
+
 ## Agents
 - Llama Agent (`llama3.1:8b` via Microsoft Agent Framework + Ollama)
 - Mistral Agent (`mistral:7b` via Microsoft Agent Framework + Ollama)
@@ -47,6 +54,7 @@ Optional flags:
 - `--display-mode ask|live|replay|visual`
 - `--play-along ask|on|off`
 - `--player-name You`
+- `--step-through ask|on|off`
 
 Example (no startup prompts):
 
@@ -57,7 +65,7 @@ python main.py --table-talk off --display-mode replay --rounds 50
 Visual play-along example:
 
 ```bash
-python main.py --display-mode visual --play-along on --player-name You --rounds 25
+python main.py --display-mode visual --play-along on --player-name You --step-through on --rounds 25
 ```
 
 ## Notes
