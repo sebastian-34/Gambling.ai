@@ -866,6 +866,7 @@ class PokerGame:
         self._pending_chat = None
         if self.table_ui:
             self.table_ui.clear_speech()
+            self.table_ui.clear_dialogue_log()
         self._dealer_line = "Shuffling up and dealing."
 
         ordered_players: list[PlayerState] = []

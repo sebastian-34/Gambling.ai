@@ -10,6 +10,19 @@ import os
 import random
 from typing import Any
 
+from .tools import (
+    estimate_equity,
+    calculate_pot_odds,
+    OpponentProfiler,
+    RangeTracker,
+    recommend_bet_size,
+    plan_bluff,
+    HandMemory,
+    plan_table_talk,
+    LeakDetector,
+)
+from .dialogue import PokerDialogueGenerator, DialogueContext
+
 try:
     from agent_framework import Agent as AFAgent
     from agent_framework.ollama import OllamaChatClient
@@ -86,6 +99,12 @@ class LLMPokerAgent(PokerAgent):
         self._opponent_stats: dict[str, dict[str, int]] = defaultdict(
             lambda: {"raises": 0, "calls": 0, "folds": 0, "chat": 0}
         )
+        
+        # Tool instances
+        self._opponent_profiler = OpponentProfiler()
+        self._range_tracker = RangeTracker()
+        self._hand_memory = HandMemory(max_memory=100)
+        self._leak_detector = LeakDetector()
 
     def start_hand(self, hand_number: int, stack: int, opponents: list[str]) -> None:
         self.hand_number = hand_number
@@ -110,14 +129,32 @@ class LLMPokerAgent(PokerAgent):
         if actor and actor != self.name and actor in self._opponent_stats:
             stats = self._opponent_stats[actor]
             low = event.lower()
+            
+            # Track in opponent profiler (Tool 4)
             if "raises" in low:
                 stats["raises"] += 1
+                self._opponent_profiler.record_action(actor, "raise", is_pressure=False)
             if "calls" in low:
                 stats["calls"] += 1
+                self._opponent_profiler.record_action(actor, "call", is_pressure=False)
             if "fold" in low:
                 stats["folds"] += 1
+                is_pressure = "pressure" in low or "facing" in low
+                self._opponent_profiler.record_action(actor, "fold", is_pressure=is_pressure)
             if ":" in event:
                 stats["chat"] += 1
+            
+            # Update range tracker (Tool 5)
+            street = "unknown"
+            if "flop" in low:
+                street = "flop"
+            elif "turn" in low:
+                street = "turn"
+            elif "river" in low:
+                street = "river"
+            if street != "unknown":
+                action_type = "raise" if "raises" in low else "call" if "calls" in low else "fold"
+                self._range_tracker.update_range_after_action(actor, street, action_type, [])
 
         # Crude causal signal: if others fold shortly after our talk, dialogue efficacy increases.
         if self._last_spoken_event_index is not None:
@@ -140,6 +177,25 @@ class LLMPokerAgent(PokerAgent):
         self._hand_journal.append(note)
         if len(self._hand_journal) > 18:
             del self._hand_journal[:-18]
+        
+        # Tool 10: Record hand in memory for future reference
+        self._hand_memory.record_hand(
+            hand_number=self.hand_number,
+            street="river",  # Simplified: assume hand went to river
+            action="fold" if not won else "call",
+            board_type="dry" if chip_delta < 0 else "wet",
+            result=outcome,
+            equity=0.5,  # Placeholder
+        )
+        
+        # Tool 12: Record for leak detection
+        action_type = "fold" if chip_delta < -5 else "raise" if chip_delta > 10 else "call"
+        self._leak_detector.record_hand_action(
+            street="river",
+            action=action_type,
+            hand_strength=0.5,
+            is_fold=chip_delta < 0,
+        )
 
     def decide(self, ctx: DecisionContext, rng: random.Random) -> Decision:
         prompt = self._build_prompt(ctx)
@@ -189,14 +245,67 @@ class LLMPokerAgent(PokerAgent):
 
         recency = " | ".join(self._hand_journal[-3:]) if self._hand_journal else "none"
         opponents = ", ".join(top_opponents[:3]) if top_opponents else "none"
+        
+        # Tool 12: Leak detection alerts
+        leaks = self._leak_detector.detect_leaks()
+        leak_alerts = ""
+        if leaks:
+            leak_summary = "; ".join([f"{leak.leak_type}({leak.severity})" for leak in leaks[:2]])
+            leak_alerts = f"Active Leaks: {leak_summary}. "
+        
+        # Tool 10: Memory insights
+        memory_insights = ""
+        similar_hands = self._hand_memory.find_similar_hands(street="river", board_type="unknown", equity=0.5, top_n=1)
+        if similar_hands:
+            hand = similar_hands[0]
+            memory_insights = f"Similar recent hand: {hand.my_action} → {hand.result}. "
+        
         return (
             f"Personal context: bankroll_trend={trend_desc}; dialogue_signal={dialogue_desc}; "
-            f"opponent_reads={opponents}; recent_results={recency}."
+            f"opponent_reads={opponents}; recent_results={recency}. "
+            f"{leak_alerts}{memory_insights}"
         )
 
     def _build_prompt(self, ctx: DecisionContext) -> str:
         chat_context = " | ".join(ctx.recent_chat[-5:]) if ctx.recent_chat else "none"
         personal_context = self._build_personal_context()
+        
+        # Tool 1 & 2: Equity and Pot-Odds Analysis
+        equity_result = estimate_equity([14, 13], [], num_opponents=4, rng=random.Random())
+        pot_odds = calculate_pot_odds(ctx.to_call, ctx.pot, equity_result.win_equity)
+        equity_context = (
+            f"Equity Analysis: hand_equity={equity_result.win_equity:.1%}; "
+            f"break_even={pot_odds.break_even_equity:.1%}; "
+            f"pot_odds_recommendation={pot_odds.ev_recommendation}. "
+        )
+        
+        # Tool 4: Opponent Profile
+        opp_profiles_summary = ""
+        for opponent in self._known_players:
+            if opponent == self.name:
+                continue
+            profile = self._opponent_profiler.get_profile(opponent)
+            opp_profiles_summary += f"{opponent}={profile.profile_type},{profile.aggression_type}; "
+        
+        # Tool 6: Bet Size Recommendation
+        objective = "value" if ctx.hand_strength > 0.65 else "bluff" if ctx.hand_strength < 0.35 else "protection"
+        bet_rec = recommend_bet_size(
+            ctx.pot, ctx.stack, ctx.min_raise, objective,
+            board_texture="wet" if ctx.community_count >= 3 else "dry",
+            equity=ctx.hand_strength
+        )
+        sizing_context = f"Sizing_recommendation={bet_rec.recommended_size}chips ({bet_rec.recommendation_reason}). "
+        
+        # Tool 7: Bluff Planning
+        bluff_plan = plan_bluff(
+            equity=ctx.hand_strength,
+            pot=ctx.pot,
+            bet_size=bet_rec.recommended_size,
+            opponent_fold_to_pressure=0.5,
+            has_blockers=ctx.hand_strength < 0.4,
+        )
+        bluff_context = f"Bluff_plan={bluff_plan.plan_summary} (fold_equity={bluff_plan.fold_equity:.1%}). "
+        
         return (
             "You are deciding a single Texas Hold'em action for one betting turn. "
             "Respond with JSON only in this exact schema: "
@@ -208,6 +317,8 @@ class LLMPokerAgent(PokerAgent):
             f"min_raise={ctx.min_raise}; stack={ctx.stack}; community_count={ctx.community_count}. "
             f"Recent table talk={chat_context}. "
             f"{personal_context} "
+            f"Tool Analysis: {equity_context}{sizing_context}{bluff_context}"
+            f"Opponent Reads: {opp_profiles_summary or 'none yet'}. "
             "Rules: if to_call is 0 then choose check or raise. "
             "If to_call > 0 then choose fold/call/raise. "
             "raise_amount is the extra amount above current bet, not total bet."
@@ -216,6 +327,26 @@ class LLMPokerAgent(PokerAgent):
     def _build_talk_prompt(self, ctx: DecisionContext) -> str:
         chat_context = " | ".join(ctx.recent_chat[-6:]) if ctx.recent_chat else "none"
         personal_context = self._build_personal_context()
+        
+        # Tool 11: Table-Talk Strategy
+        talk_strategy = plan_table_talk(
+            recent_chat=ctx.recent_chat,
+            hand_strength=ctx.hand_strength,
+            to_call=ctx.to_call,
+            stack=ctx.stack,
+            opponent_profiles={
+                name: self._opponent_profiler.get_profile(name)
+                for name in self._known_players if name != self.name
+            },
+            player_name=self.name,
+        )
+        
+        talk_guidance = (
+            f"Talk_Strategy: should_speak={talk_strategy.should_speak}; "
+            f"tone={talk_strategy.tone}; purpose={talk_strategy.strategic_purpose}; "
+            f"suggestion='{talk_strategy.suggested_message}'. "
+        )
+        
         return (
             "You are roleplaying table talk in a Texas Hold'em hand. "
             "Reply with JSON only using this schema: "
@@ -226,6 +357,7 @@ class LLMPokerAgent(PokerAgent):
             f"to_call={ctx.to_call}; hand_strength={ctx.hand_strength:.3f}; stack={ctx.stack}. "
             f"Recent table talk={chat_context}. "
             f"{personal_context} "
+            f"{talk_guidance} "
             "If talking, interpret opponents' latest lines and respond strategically using confidence, "
             "misdirection, pressure, or calm control."
         )
@@ -367,61 +499,50 @@ class LLMPokerAgent(PokerAgent):
         return Decision("call")
 
     def _fallback_chat(self, ctx: DecisionContext, rng: random.Random) -> str:
-        seed = int(hashlib.sha256(self.profile.name.encode("utf-8")).hexdigest()[:8], 16)
-        model_rng = random.Random(seed + ctx.pot + ctx.to_call + len(ctx.recent_chat) * 7)
-
-        # Agents can stay silent based on pressure and tendency.
-        talk_bias = 0.45 + model_rng.random() * 0.25
+        """Generate diverse, realistic poker table talk using the enhanced dialogue system."""
+        
+        # Sometimes stay silent based on pressure and personality
+        talk_bias = 0.45 + rng.random() * 0.25
         if ctx.to_call > 0:
             talk_bias -= 0.08
         if ctx.hand_strength > 0.75:
             talk_bias += 0.07
+        
         if rng.random() > max(0.2, min(0.9, talk_bias)):
             return ""
-
-        last_line = ""
-        for line in reversed(ctx.recent_chat):
-            if ":" in line:
-                speaker, content = line.split(":", 1)
-                if speaker.strip() != ctx.player_name:
-                    last_line = content.strip()
-                    break
-
-        if ctx.hand_strength > 0.8:
-            stance = "confident"
-        elif ctx.hand_strength < 0.35:
-            stance = "deflecting"
-        else:
-            stance = "balanced"
-
-        if last_line:
-            response_starts = [
-                "Interesting read.",
-                "Maybe.",
-                "Could be.",
-                "I hear you.",
-            ]
-            opener = response_starts[model_rng.randint(0, len(response_starts) - 1)]
-        else:
-            opener = ""
-
-        if stance == "confident":
-            core = "This texture favors pressure, not hesitation."
-        elif stance == "deflecting":
-            core = "I'm just navigating ranges and timing here."
-        else:
-            if ctx.to_call > 0:
-                core = "Pot odds and tempo matter more than noise."
-            else:
-                core = "Let's see who tells the cleaner story by river."
-
-        message = f"{opener} {core}".strip()
-        message = " ".join(message.split())
-
-        words = message.split()
-        if len(words) > 16:
-            message = " ".join(words[:16])
-        return message
+        
+        # Map game state to dialogue context
+        position_map = {
+            0: "button",
+            1: "sb",
+            2: "bb",
+            3: "utg",
+            4: "co",
+        }
+        
+        # Estimate bet size ratio for dialogue context
+        bet_size_ratio = (ctx.current_bet / ctx.pot) if ctx.pot > 0 else 0.5
+        
+        # Default position to cutoff if seat_index not available
+        position = "co"
+        
+        dialogue_ctx = DialogueContext(
+            hand_strength=ctx.hand_strength,
+            to_call=ctx.to_call,
+            pot=ctx.pot,
+            stack=ctx.stack,
+            street=ctx.street,
+            position=position,
+            opponent_count=max(1, 5 - ctx.community_count),  # Rough estimate
+            is_aggressor=False,  # Don't have this info in DecisionContext
+            just_raised=ctx.current_bet > 0,
+            bet_size_ratio=bet_size_ratio,
+        )
+        
+        # Generate dialogue using the new system
+        dialogue = PokerDialogueGenerator.generate_dialogue(dialogue_ctx, seed=rng.randint(0, 10000))
+        
+        return dialogue
 
 
 class DealerAgent:
