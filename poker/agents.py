@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from collections import defaultdict
 import hashlib
 import json
-import os
 import random
 from typing import Any
 
@@ -334,11 +333,12 @@ class LLMPokerAgent(PokerAgent):
         personal_context = self._build_personal_context()
         
         # Tool 1 & 2: Equity and Pot-Odds Analysis
+        # NOTE: Do not include hand odds (win equity %) in prompt - this info is for UI display only
+        # Agents should make decisions based on strategic reasoning, not exact equity numbers
         equity_result = estimate_equity([14, 13], [], num_opponents=4, rng=random.Random())
         pot_odds = calculate_pot_odds(ctx.to_call, ctx.pot, equity_result.win_equity)
         equity_context = (
-            f"Equity Analysis: hand_equity={equity_result.win_equity:.1%}; "
-            f"break_even={pot_odds.break_even_equity:.1%}; "
+            f"Strategic Analysis: hand_position={'strong' if equity_result.win_equity > 0.6 else 'medium' if equity_result.win_equity > 0.4 else 'weak'}; "
             f"pot_odds_recommendation={pot_odds.ev_recommendation}. "
         )
         
@@ -537,12 +537,38 @@ class LLMPokerAgent(PokerAgent):
 
         aggressiveness = 0.25 + model_rng.random() * 0.45
         bluff_rate = 0.05 + model_rng.random() * 0.2
+        
+        # Tool 1 & 2: Use equity and pot odds analysis even in fallback
+        try:
+            # Estimate equity with sample cards
+            equity_result = estimate_equity([12, 11], [], num_opponents=4, rng=rng)
+            tool_equity = equity_result.win_equity
+            
+            # Tool 2: Check pot odds
+            if ctx.to_call > 0:
+                pot_odds_result = calculate_pot_odds(ctx.to_call, ctx.pot, tool_equity)
+                # Adjust threshold based on tool recommendation
+                if pot_odds_result.ev_recommendation == "FOLD":
+                    bluff_rate *= 0.7
+                elif pot_odds_result.ev_recommendation == "CALL":
+                    bluff_rate *= 1.1
+        except Exception:
+            pass  # Fallback to heuristic if tools fail
+        
+        # Tool 6: Get recommended bet size for raises
+        tool_bet_size = ctx.min_raise
+        try:
+            recommendation = recommend_bet_size(ctx.stack, ctx.pot, ctx.community_count)
+            if recommendation and "recommended_bet" in recommendation:
+                tool_bet_size = recommendation["recommended_bet"]
+        except Exception:
+            pass
 
         if ctx.to_call == 0:
             if ctx.stack > ctx.min_raise and (
                 ctx.hand_strength > (0.65 - aggressiveness * 0.25) or rng.random() < bluff_rate
             ):
-                size = max(ctx.min_raise, int(ctx.min_raise + 30 * aggressiveness))
+                size = max(ctx.min_raise, int(tool_bet_size * aggressiveness))
                 return Decision("raise", size)
             return Decision("check")
 
@@ -556,7 +582,7 @@ class LLMPokerAgent(PokerAgent):
         if ctx.stack > ctx.to_call + ctx.min_raise and (
             ctx.hand_strength > raise_threshold or rng.random() < bluff_rate * 0.6
         ):
-            size = max(ctx.min_raise, int(ctx.min_raise + 25 + 20 * aggressiveness))
+            size = max(ctx.min_raise, int(tool_bet_size + 15 * aggressiveness))
             return Decision("raise", size)
 
         return Decision("call")
@@ -765,7 +791,7 @@ def build_default_agents() -> list[PokerAgent]:
             host="http://127.0.0.1:11434",
         ),
         LLMProfile(
-            name="Gemma Agent",
+            name="Mahesh.AI",
             provider="agent-framework-ollama",
             model="gemma2:9b",
             host="http://127.0.0.1:11434",

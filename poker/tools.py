@@ -45,18 +45,58 @@ def estimate_equity(
     if num_opponents < 1 or num_opponents > 6:
         return EquityResult(0.5, 0.0, 0.5, 0.5)
     
+    # Calculate player's hand strength based on hole cards
+    def get_hand_strength(cards: list[int], board: list[int]) -> float:
+        """Estimate hand strength as a value 0-1."""
+        if not cards or len(cards) < 2:
+            return 0.3
+        
+        c1, c2 = cards[0], cards[1]
+        is_pair = c1 == c2
+        high_card = max(c1, c2)
+        
+        # Base strength from hole cards
+        if is_pair:
+            strength = 0.4 + (c1 / 28.0) * 0.25  # Pairs start at 0.4
+        else:
+            strength = (max(c1, c2) / 14.0) * 0.35  # High cards start lower
+        
+        # Board texture modifiers
+        if board:
+            board_high = max(board)
+            if is_pair:
+                if high_card > board_high:
+                    strength += 0.15  # Overpair
+                elif high_card < board_high:
+                    strength -= 0.05  # Underpair
+            else:
+                # Check if we hit the board
+                if c1 in board or c2 in board:
+                    strength += 0.20  # Paired with board
+                elif max(c1, c2) > board_high:
+                    strength += 0.05  # Overcard
+        
+        return min(strength, 0.75)
+    
     wins = 0
     ties = 0
     
     for _ in range(num_simulations):
-        # Rough simulation: assign random hand strength to opponents
-        my_strength = sum(hole_cards) / 28.0 * 0.8  # Normalize roughly
+        # Calculate player's strength
+        my_strength = get_hand_strength(hole_cards, board_cards)
         
-        opponent_strengths = [
-            rng.random() * 0.9 for _ in range(num_opponents)
-        ]
-        board_boost = min(len(board_cards) / 5.0, 0.4)
-        my_strength = min(my_strength + board_boost, 0.99)
+        # Generate opponent strengths (random hands)
+        opponent_strengths = []
+        for _ in range(num_opponents):
+            # Random opponent cards (different from ours and board)
+            used_ranks = set(hole_cards) | set(board_cards)
+            available = [r for r in range(2, 15) if r not in used_ranks]
+            if len(available) >= 2:
+                opp_cards = rng.sample(available, 2)
+                opp_strength = get_hand_strength(opp_cards, board_cards)
+            else:
+                opp_strength = rng.random() * 0.8
+            opponent_strengths.append(opp_strength)
         
         max_opponent = max(opponent_strengths) if opponent_strengths else 0
         
@@ -65,7 +105,6 @@ def estimate_equity(
         elif my_strength == max_opponent:
             ties += 1
     
-    total = num_simulations + num_opponents  # Rough tie accounting
     win_prob = wins / num_simulations
     tie_prob = ties / (num_simulations * max(1, num_opponents))
     loss_prob = 1.0 - win_prob - tie_prob
@@ -204,6 +243,7 @@ class OpponentProfiler:
     
     def record_bluff_attempt(self, opponent_name: str, succeeded: bool) -> None:
         """Record bluff outcome for opponent."""
+        _ = succeeded
         self.stats[opponent_name]["bluffs"] += 1
     
     def record_showdown(self, opponent_name: str, hand_strength: str) -> None:
@@ -557,6 +597,7 @@ def plan_table_talk(
     Returns:
         TalkStrategy with tone and message suggestion
     """
+    _ = opponent_profiles, player_name
     should_speak = True
     pressure_level = to_call / max(1, stack) if stack > 0 else 0
     
@@ -621,6 +662,7 @@ class LeakDetector:
         is_fold: bool = False,
     ) -> None:
         """Record action for pattern analysis."""
+        _ = is_fold
         key = f"{street}_{hand_strength:.1f}"
         self.action_patterns[key].append(action)
     

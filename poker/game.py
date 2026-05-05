@@ -9,6 +9,7 @@ from typing import Any
 
 from .agents import DealerAgent, Decision, DecisionContext, PokerAgent
 from .cards import Card, cards_to_text, deal_hand, deal_one, evaluate_best_hand, shuffled_deck
+from .tools import estimate_equity, calculate_pot_odds, recommend_bet_size, plan_bluff
 
 try:
     from .ui import PokerTableUI
@@ -340,6 +341,11 @@ class PokerGame:
     def _render_table(self, current_actor: str | None = None, force_reveal_all: bool = False) -> None:
         if not self.table_ui:
             return
+        
+        # Compute tool analytics for visualization
+        analytics = self._compute_tool_analytics(current_actor)
+        self.table_ui.set_tool_analytics(analytics)
+        
         self.table_ui.render(
             players=self.players,
             community_cards=self._community_cards,
@@ -352,6 +358,78 @@ class PokerGame:
             dealer_name=self.dealer_agent.name if self.dealer_agent else "Dealer",
             dealer_message=self._dealer_line,
         )
+    
+    def _compute_tool_analytics(self, current_actor: str | None = None) -> dict[str, Any]:
+        """Compute tool analytics for the current game state."""
+        analytics: dict[str, Any] = {}
+        
+        if not current_actor:
+            return analytics
+        
+        # Find the current player
+        current_player = None
+        for player in self.players:
+            if player.name == current_actor:
+                current_player = player
+                break
+        
+        if not current_player or current_player.folded:
+            return analytics
+        
+        try:
+            # Tool 1: Equity estimation
+            if current_player.hole_cards and len(self._community_cards) <= 5:
+                hole_card_ranks = [card.rank for card in current_player.hole_cards]
+                board_card_ranks = [card.rank for card in self._community_cards]
+                num_opponents = sum(1 for p in self.players if not p.folded and p.name != current_actor)
+                
+                if num_opponents > 0:
+                    equity_result = estimate_equity(hole_card_ranks, board_card_ranks, num_opponents)
+                    analytics["equity"] = {
+                        "win_equity": equity_result.win_equity,
+                        "win_prob": equity_result.win_prob,
+                    }
+            
+            # Tool 2: Pot odds
+            to_call = max(0, max(p.current_bet for p in self.players if not p.folded) - current_player.current_bet)
+            if self._pot > 0 and "equity" in analytics:
+                pot_odds_result = calculate_pot_odds(to_call, self._pot, analytics["equity"]["win_equity"])
+                analytics["pot_odds"] = {
+                    "break_even_equity": pot_odds_result.break_even_equity,
+                    "ev_if_call": pot_odds_result.ev_if_call,
+                    "recommendation": pot_odds_result.ev_recommendation,
+                }
+            
+            # Tool 6: Bet size recommendation
+            if current_player.stack > 0 and to_call >= 0:
+                recommendation = recommend_bet_size(
+                    stack=current_player.stack,
+                    pot=self._pot,
+                    opponent_count=len([p for p in self.players if not p.folded and p.name != current_actor])
+                )
+                analytics["bet_size"] = {
+                    "recommended_bet": recommendation.get("recommended_bet", current_player.stack // 4),
+                    "strategy": recommendation.get("strategy", "value_bet"),
+                }
+            
+            # Tool 7: Bluff opportunity
+            if len(self._community_cards) > 0:
+                bluff_analysis = plan_bluff(
+                    board_cards=[c.rank for c in self._community_cards],
+                    stack=current_player.stack,
+                    pot=self._pot,
+                    opponent_count=len([p for p in self.players if not p.folded and p.name != current_actor])
+                )
+                analytics["bluff_opportunity"] = {
+                    "opportunity_score": bluff_analysis.get("opportunity_score", 0),
+                    "recommended_bet": bluff_analysis.get("recommended_bet", current_player.stack // 4),
+                }
+        
+        except Exception as e:
+            # Silently fail tool computation to not interrupt game
+            pass
+        
+        return analytics
 
     def _step_wait(self, label: str) -> None:
         if self.table_ui and self.step_through:
@@ -1144,8 +1222,13 @@ class PokerGame:
         self._step_wait("Hand complete")
 
     def play_tournament(self, rounds: int = 25) -> list[tuple[str, int]]:
+        # Reset fast forward flag at the start of tournament
+        if self.table_ui:
+            self.table_ui.reset_fast_forward_flag()
+        
         completed = 0
         for _ in range(rounds):
+            
             alive = [p for p in self.players if p.stack > 0]
             if len(alive) <= 1:
                 break
