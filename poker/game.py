@@ -239,6 +239,7 @@ class PokerGame:
         record = dict(self._current_hand_record)
         record["winner_names"] = sorted(winner_names)
         record["board"] = [str(card) for card in community_cards]
+        record["hole_cards"] = {player.name: [str(card) for card in player.hole_cards] for player in ordered_players}
         record["pot"] = pot
         record["ended_by_fold"] = ended_by_fold
         record["showdown"] = not ended_by_fold and len(winner_names) > 0
@@ -336,7 +337,7 @@ class PokerGame:
             "replay_text": self.get_replay_text(),
         }
 
-    def _render_table(self, current_actor: str | None = None) -> None:
+    def _render_table(self, current_actor: str | None = None, force_reveal_all: bool = False) -> None:
         if not self.table_ui:
             return
         self.table_ui.render(
@@ -347,7 +348,7 @@ class PokerGame:
             street=self._current_street,
             current_actor=current_actor,
             viewer_name=self.human_player_name if self.play_along else None,
-            reveal_all_cards=not self.play_along,
+            reveal_all_cards=force_reveal_all or (not self.play_along),
             dealer_name=self.dealer_agent.name if self.dealer_agent else "Dealer",
             dealer_message=self._dealer_line,
         )
@@ -557,6 +558,15 @@ class PokerGame:
                     hand_strength=strength,
                     min_raise=min_raise,
                 )
+                self._maybe_action_dialogue(
+                    player=player,
+                    action="fold",
+                    raise_amount=0,
+                    ctx=ctx,
+                    street=street,
+                    pot=pot,
+                    hand_chat=hand_chat,
+                )
                 self._render_table()
                 continue
 
@@ -601,6 +611,15 @@ class PokerGame:
                         hand_strength=strength,
                         min_raise=min_raise,
                     )
+                    self._maybe_action_dialogue(
+                        player=player,
+                        action="call",
+                        raise_amount=0,
+                        ctx=ctx,
+                        street=street,
+                        pot=pot,
+                        hand_chat=hand_chat,
+                    )
                 else:
                     self._log(f"{player.name:<12} checks")
                     self._append_chat(hand_chat, f"{player.name} checks.")
@@ -616,6 +635,15 @@ class PokerGame:
                         stack_after=player.stack,
                         hand_strength=strength,
                         min_raise=min_raise,
+                    )
+                    self._maybe_action_dialogue(
+                        player=player,
+                        action="check",
+                        raise_amount=0,
+                        ctx=ctx,
+                        street=street,
+                        pot=pot,
+                        hand_chat=hand_chat,
                     )
                 self._render_table()
                 continue
@@ -646,6 +674,15 @@ class PokerGame:
                             hand_strength=strength,
                             min_raise=min_raise,
                         )
+                        self._maybe_action_dialogue(
+                            player=player,
+                            action="call",
+                            raise_amount=0,
+                            ctx=ctx,
+                            street=street,
+                            pot=pot,
+                            hand_chat=hand_chat,
+                        )
                     elif to_call == 0:
                         self._log(f"{player.name:<12} checks")
                         self._append_chat(hand_chat, f"{player.name} checks.")
@@ -661,6 +698,15 @@ class PokerGame:
                             stack_after=player.stack,
                             hand_strength=strength,
                             min_raise=min_raise,
+                        )
+                        self._maybe_action_dialogue(
+                            player=player,
+                            action="check",
+                            raise_amount=0,
+                            ctx=ctx,
+                            street=street,
+                            pot=pot,
+                            hand_chat=hand_chat,
                         )
                     else:
                         player.folded = True
@@ -678,6 +724,15 @@ class PokerGame:
                             stack_after=player.stack,
                             hand_strength=strength,
                             min_raise=min_raise,
+                        )
+                        self._maybe_action_dialogue(
+                            player=player,
+                            action="fold",
+                            raise_amount=0,
+                            ctx=ctx,
+                            street=street,
+                            pot=pot,
+                            hand_chat=hand_chat,
                         )
                     self._render_table()
                     continue
@@ -702,6 +757,15 @@ class PokerGame:
                     hand_strength=strength,
                     min_raise=min_raise,
                 )
+                self._maybe_action_dialogue(
+                    player=player,
+                    action="raise",
+                    raise_amount=to_put,
+                    ctx=ctx,
+                    street=street,
+                    pot=pot,
+                    hand_chat=hand_chat,
+                )
                 self._render_table()
 
                 action_queue = [p for p in ordered_players if not p.folded and p is not player]
@@ -724,6 +788,15 @@ class PokerGame:
                 hand_strength=strength,
                 min_raise=min_raise,
             )
+            self._maybe_action_dialogue(
+                player=player,
+                action="fold",
+                raise_amount=0,
+                ctx=ctx,
+                street=street,
+                pot=pot,
+                hand_chat=hand_chat,
+            )
             self._render_table()
 
         return pot
@@ -737,6 +810,40 @@ class PokerGame:
             self.table_ui.set_speech(speaker.strip(), message.strip())
             self._render_table()
         self._broadcast_event(entry)
+
+    def _maybe_action_dialogue(
+        self,
+        *,
+        player: PlayerState,
+        action: str,
+        raise_amount: int,
+        ctx: DecisionContext,
+        street: str,
+        pot: int,
+        hand_chat: list[str],
+    ) -> None:
+        if not self.enable_table_talk:
+            return
+        if self.play_along and player.name == self.human_player_name:
+            return
+        message = player.agent.action_talk(action=action, raise_amount=raise_amount, ctx=ctx, rng=self.rng).strip()
+        if not message:
+            return
+        line = f"{player.name}: {message}"
+        self._log(f"  {line}")
+        self._record_chat(street, player.name, message, pot)
+        self._append_chat(hand_chat, line)
+
+    def _reveal_all_hands(self, ordered_players: list[PlayerState], community_cards: list[Card]) -> None:
+        if not self.play_along:
+            return
+        self._log("Card reveal (end of hand):")
+        for p in ordered_players:
+            cards = cards_to_text(p.hole_cards) if p.hole_cards else "--"
+            self._log(f"{p.name:<12} hole: {cards}")
+        self._dealer_say("All hole cards are now revealed for this hand.")
+        self._render_table(force_reveal_all=True)
+        self._step_wait("Review all hole cards")
 
     def _broadcast_event(self, event: str) -> None:
         for player in self.players:
@@ -908,6 +1015,7 @@ class PokerGame:
         self._step_wait("Preflop complete")
         if len([p for p in ordered_players if not p.folded]) <= 1:
             winner_names = self._showdown(ordered_players, community_cards, pot)
+            self._reveal_all_hands(ordered_players, community_cards)
             self._finalize_hand_record(
                 ordered_players=ordered_players,
                 hand_start_stacks=hand_start_stacks,
@@ -944,6 +1052,7 @@ class PokerGame:
         self._step_wait("Flop action complete")
         if len([p for p in ordered_players if not p.folded]) <= 1:
             winner_names = self._showdown(ordered_players, community_cards, pot)
+            self._reveal_all_hands(ordered_players, community_cards)
             self._finalize_hand_record(
                 ordered_players=ordered_players,
                 hand_start_stacks=hand_start_stacks,
@@ -980,6 +1089,7 @@ class PokerGame:
         self._step_wait("Turn action complete")
         if len([p for p in ordered_players if not p.folded]) <= 1:
             winner_names = self._showdown(ordered_players, community_cards, pot)
+            self._reveal_all_hands(ordered_players, community_cards)
             self._finalize_hand_record(
                 ordered_players=ordered_players,
                 hand_start_stacks=hand_start_stacks,
@@ -1016,6 +1126,7 @@ class PokerGame:
         self._step_wait("River action complete")
 
         winner_names = self._showdown(ordered_players, community_cards, pot)
+        self._reveal_all_hands(ordered_players, community_cards)
         self._finalize_hand_record(
             ordered_players=ordered_players,
             hand_start_stacks=hand_start_stacks,

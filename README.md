@@ -56,10 +56,10 @@ Optional flags:
 - `--player-name You`
 - `--step-through ask|on|off`
 
-Dashboard mode opens a tabbed results window with:
+At tournament end, the dashboard opens automatically and includes:
 - final leaderboard
 - per-agent stat cards
-- replay highlights
+- replay highlights and per-hand hole-card reveals
 - table-talk impact
 - chip, pot, and volatility charts
 - a match-summary page

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import textwrap
 import tkinter as tk
 from tkinter import simpledialog
 from typing import Any
@@ -183,105 +184,7 @@ class PokerTableUI:
         self._canvas_width = event.width
         self._canvas_height = event.height
 
-    def _draw_speech_bubble(
-        self,
-        x: float,
-        y: float,
-        width: float,
-        height: float,
-        lines: list[str],
-        pointer_x: float = 0,
-        pointer_y: float = 0,
-    ) -> None:
-        """Draw an enhanced speech bubble with pointer to speaker."""
-        try:
-            # Validate coordinates
-            if not all(isinstance(v, (int, float)) for v in [x, y, width, height, pointer_x, pointer_y]):
-                return
-            if width <= 0 or height <= 0:
-                return
-            if not lines or not isinstance(lines, list):
-                return
-                
-            # Speech bubble colors (light yellow for visibility)
-            bubble_fill = "#FEF9E7"
-            bubble_outline = "#F1C40F"
-            text_color = "#2C3E50"
-            
-            # Left edge of bubble
-            left = x - width / 2
-            right = x + width / 2
-            top = y - height / 2
-            bottom = y + height / 2
-            
-            # Draw main bubble rectangle
-            self.canvas.create_rectangle(
-                left,
-                top,
-                right,
-                bottom,
-                fill=bubble_fill,
-                outline=bubble_outline,
-                width=2,
-            )
-            
-            # Draw pointer triangle if specified
-            if pointer_x and pointer_y:
-                try:
-                    # Calculate pointer direction (roughly towards speaker)
-                    dx = pointer_x - x
-                    dy = pointer_y - y
-                    length = (dx**2 + dy**2)**0.5
-                    if length > 0:
-                        dx_norm = dx / length
-                        dy_norm = dy / length
-                        
-                        # Pointer origin on bubble edge
-                        origin_x = x + (dx_norm * width / 2.5)
-                        origin_y = y + (dy_norm * height / 2.5)
-                        
-                        # Pointer tip
-                        tip_x = pointer_x
-                        tip_y = pointer_y
-                        
-                        # Pointer sides
-                        side_len = 12
-                        side1_x = origin_x - dy_norm * side_len
-                        side1_y = origin_y + dx_norm * side_len
-                        side2_x = origin_x + dy_norm * side_len
-                        side2_y = origin_y - dx_norm * side_len
-                        
-                        self.canvas.create_polygon(
-                            origin_x,
-                            origin_y,
-                            side1_x,
-                            side1_y,
-                            tip_x,
-                            tip_y,
-                            fill=bubble_fill,
-                            outline=bubble_outline,
-                            width=2,
-                        )
-                except Exception:
-                    pass  # Ignore pointer drawing errors
-            
-            # Draw text
-            line_height = 16
-            start_y = top + 10
-            for idx, line in enumerate(lines):
-                try:
-                    self.canvas.create_text(
-                        x,
-                        start_y + idx * line_height,
-                        text=line,
-                        font=("Consolas", 9),
-                        fill=text_color,
-                        anchor="center",
-                    )
-                except Exception:
-                    pass  # Ignore text drawing errors
-        except Exception as e:
-            print(f"Error in _draw_speech_bubble: {e}")
+
 
     def _draw_text_box(self, x: float, y: float, lines: list[str], fill: str, text_fill: str, anchor: str = "center") -> None:
         text_ids = []
@@ -308,6 +211,45 @@ class PokerTableUI:
         self.canvas.create_rectangle(left, top, right, bottom, fill=fill, outline="#ECF0F1", width=2)
         for tid in text_ids:
             self.canvas.tag_raise(tid)
+
+    def _draw_speech_bubble(self, x: float, y: float, text: str) -> None:
+        wrapped = textwrap.fill(text[:120], width=28)
+        text_id = self.canvas.create_text(
+            x,
+            y,
+            text=wrapped,
+            font=("Consolas", 10),
+            fill="#1B2631",
+            justify="center",
+        )
+        bbox = self.canvas.bbox(text_id)
+        if not bbox:
+            return
+        left = bbox[0] - 12
+        top = bbox[1] - 8
+        right = bbox[2] + 12
+        bottom = bbox[3] + 8
+        self.canvas.create_rectangle(
+            left,
+            top,
+            right,
+            bottom,
+            fill="#FCFCFD",
+            outline="#AAB7B8",
+            width=2,
+        )
+        self.canvas.create_polygon(
+            x - 10,
+            bottom,
+            x + 10,
+            bottom,
+            x,
+            bottom + 10,
+            fill="#FCFCFD",
+            outline="#AAB7B8",
+            width=2,
+        )
+        self.canvas.tag_raise(text_id)
 
     def _draw_avatar(self, x: float, y: float, style: dict[str, str], is_actor: bool) -> None:
         self.canvas.create_oval(x - 20, y - 44, x + 20, y - 4, fill=style["skin"], outline="#17202A", width=2)
@@ -485,40 +427,8 @@ class PokerTableUI:
                 self.canvas.create_text(x + 72, y - 27, text="D", font=("Consolas", 11, "bold"), fill="black")
 
             if name in self._speech and self._speech[name]:
-                bubble_text = self._speech[name]
-                # Wrap text at 45 characters for side positioning
-                lines = []
-                words = bubble_text.split()
-                current_line = ""
-                for word in words:
-                    if len(current_line) + len(word) + 1 <= 45:
-                        current_line += (" " if current_line else "") + word
-                    else:
-                        if current_line:
-                            lines.append(current_line)
-                        current_line = word
-                if current_line:
-                    lines.append(current_line)
-                
-                if lines:
-                    # Get dialogue position based on seat
-                    dialog_x, dialog_y, dialog_w, dialog_h = self._get_dialogue_position(idx, x, y)
-                    
-                    # Calculate bubble size
-                    line_height = 16
-                    bubble_height = (len(lines) * line_height) + 20
-                    bubble_width = max(min(len(line) * 7, 200) for line in lines) if lines else 150
-                    
-                    # Draw speech bubble with pointer to player
-                    self._draw_speech_bubble(
-                        dialog_x,
-                        dialog_y,
-                        bubble_width,
-                        bubble_height,
-                        lines,
-                        pointer_x=x - 55,
-                        pointer_y=y,
-                    )
+                bubble_text = self._speech[name][:80]
+                self._draw_speech_bubble(x + 20, y - 98, bubble_text)
 
         # Physical dealer with enhanced styling (bottom center)
         dealer_x = center_x
@@ -531,15 +441,7 @@ class PokerTableUI:
         self._draw_text_box(dealer_x, dealer_y + 50, [f"🎰 {dealer_name}"], fill="#1B2631", text_fill="#F7DC6F")
         
         if dealer_message:
-            # Draw dealer message in enhanced style
-            msg_lines = dealer_message.split('\n')[:3]  # Limit to 3 lines
-            self._draw_speech_bubble(
-                dealer_x,
-                dealer_y - 80,
-                220,
-                (len(msg_lines) * 16) + 20,
-                msg_lines,
-            )
+            self._draw_speech_bubble(dealer_x + 170, dealer_y - 88, dealer_message)
 
         try:
             self.root.update_idletasks()

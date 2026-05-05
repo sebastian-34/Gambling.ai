@@ -169,12 +169,14 @@ def main() -> None:
 			print("=" * 40)
 			print(replay)
 
-	if display_mode == "dashboard":
-		report = game.get_tournament_report()
-		if PokerResultsDashboard is not None:
+	report = game.get_tournament_report()
+	if PokerResultsDashboard is not None:
+		try:
 			PokerResultsDashboard(report, title="Gambling.ai Tournament Results").show()
-		else:
-			print("Dashboard UI unavailable. Results were still collected.")
+		except Exception:
+			print("Dashboard UI failed to launch. Results were still collected.")
+	else:
+		print("Dashboard UI unavailable. Results were still collected.")
 
 	print("\nFinal Standings")
 	print("=" * 40)
