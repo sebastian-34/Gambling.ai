@@ -117,6 +117,7 @@ class PokerResultsDashboard:
         self.replay_tab = tk.Frame(tabs, bg=self.BG)
         self.talk_tab = tk.Frame(tabs, bg=self.BG)
         self.charts_tab = tk.Frame(tabs, bg=self.BG)
+        self.tools_tab = tk.Frame(tabs, bg=self.BG)
         self.summary_tab = tk.Frame(tabs, bg=self.BG)
 
         tabs.add(self.overview_tab, text="Overview")
@@ -125,6 +126,7 @@ class PokerResultsDashboard:
         tabs.add(self.replay_tab, text="Replay")
         tabs.add(self.talk_tab, text="Table Talk")
         tabs.add(self.charts_tab, text="Charts")
+        tabs.add(self.tools_tab, text="Tool Analytics")
         tabs.add(self.summary_tab, text="Summary")
 
         self._build_overview_tab()
@@ -133,6 +135,7 @@ class PokerResultsDashboard:
         self._build_replay_tab()
         self._build_talk_tab()
         self._build_charts_tab()
+        self._build_tools_tab()
         self._build_summary_tab()
 
     def _mini_card(self, parent: tk.Misc, title: str, value: str, color: str) -> None:
@@ -442,6 +445,178 @@ class PokerResultsDashboard:
             ),
         )
 
+    def _build_tools_tab(self) -> None:
+        """Build the Tool Analytics tab showing decision support metrics."""
+        scroll_frame = ScrollableFrame(self.tools_tab, bg=self.BG)
+        scroll_frame.pack(fill="both", expand=True, padx=12, pady=12)
+        
+        # Tool 1: Equity Estimation
+        frame = self._panel(
+            scroll_frame.inner,
+            "⚔ Tool 1: Equity Estimator",
+            "Monte Carlo hand strength evaluation"
+        )
+        tk.Label(
+            frame,
+            text="Calculates win probability against random opponents using Monte Carlo simulation.\n"
+                 "Helps players understand hand strength across different board textures.",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9),
+            wraplength=600,
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=8)
+        
+        # Tool 2: Pot Odds
+        frame = self._panel(
+            scroll_frame.inner,
+            "💰 Tool 2: Pot Odds Calculator",
+            "Break-even equity and expected value"
+        )
+        tk.Label(
+            frame,
+            text="Determines the minimum equity needed to call profitably.\n"
+                 "Compares expected value of calling vs. folding given current pot odds.",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9),
+            wraplength=600,
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=8)
+        
+        # Tool 4: Opponent Profiler
+        frame = self._panel(
+            scroll_frame.inner,
+            "🔍 Tool 4: Opponent Profiler",
+            "Tracks player tendencies and styles"
+        )
+        tk.Label(
+            frame,
+            text="Maintains statistics on opponent behavior:\n"
+                 "• Aggression level (aggressive/passive)\n"
+                 "• Fold frequency\n"
+                 "• Call vs. raise ratios",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9),
+            wraplength=600,
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=8)
+        
+        # Tool 5: Range Tracker
+        frame = self._panel(
+            scroll_frame.inner,
+            "📊 Tool 5: Range Tracker",
+            "Estimates opponent hand ranges"
+        )
+        tk.Label(
+            frame,
+            text="Narrows down possible opponent holdings based on:\n"
+                 "• Betting patterns\n"
+                 "• Position\n"
+                 "• Community cards",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9),
+            wraplength=600,
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=8)
+        
+        # Tool 6: Bet-Size Recommender
+        frame = self._panel(
+            scroll_frame.inner,
+            "🎯 Tool 6: Bet-Size Recommender",
+            "Calculates optimal bet amounts"
+        )
+        tk.Label(
+            frame,
+            text="Suggests bet sizes based on:\n"
+                 "• Desired fold frequency from opponents\n"
+                 "• Stack sizes\n"
+                 "• Pot odds and equity",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9),
+            wraplength=600,
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=8)
+        
+        # Tool 7: Bluff Planner
+        frame = self._panel(
+            scroll_frame.inner,
+            "🎭 Tool 7: Bluff Planner",
+            "Identifies profitable bluff opportunities"
+        )
+        tk.Label(
+            frame,
+            text="Analyzes game state to find spots where bluffing is +EV:\n"
+                 "• Board texture analysis\n"
+                 "• Opponent tendencies\n"
+                 "• Stack-to-pot ratios",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9),
+            wraplength=600,
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=8)
+        
+        # Tool 10: Memory Retrieval
+        frame = self._panel(
+            scroll_frame.inner,
+            "💾 Tool 10: Memory Retrieval",
+            "Recalls hand history and outcomes"
+        )
+        tk.Label(
+            frame,
+            text="Retrieves relevant historical hands for:\n"
+                 "• Studying similar situations\n"
+                 "• Opponent reference\n"
+                 "• Learning from past decisions",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9),
+            wraplength=600,
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=8)
+        
+        # Tool 11: Table-Talk Strategy
+        frame = self._panel(
+            scroll_frame.inner,
+            "💬 Tool 11: Table-Talk Strategy",
+            "Generates contextual dialogue"
+        )
+        tk.Label(
+            frame,
+            text="Produces natural-sounding table talk based on:\n"
+                 "• Hand strength\n"
+                 "• Position\n"
+                 "• Game dynamics",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9),
+            wraplength=600,
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=8)
+        
+        # Tool 12: Leak Detector
+        frame = self._panel(
+            scroll_frame.inner,
+            "🔧 Tool 12: Leak Detector",
+            "Identifies gameplay weaknesses"
+        )
+        tk.Label(
+            frame,
+            text="Analyzes performance to find leaks:\n"
+                 "• Over-folding in certain spots\n"
+                 "• Calling too wide\n"
+                 "• Position-based mistakes",
+            bg=self.PANEL,
+            fg=self.TEXT,
+            font=("Segoe UI", 9),
+            wraplength=600,
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=8)
+
     def _build_summary_tab(self) -> None:
         frame = self._panel(
             self.summary_tab,
@@ -559,7 +734,8 @@ class PokerResultsDashboard:
             canvas.create_text(width / 2, height / 2, text="No chart data.", fill=self.MUTED, font=("Segoe UI", 11))
             return
 
-        pad_left, pad_right, pad_top, pad_bottom = 40, 24, 42, 52
+        pad_left, pad_right, pad_top = 40, 24, 42
+        pad_bottom = max(80, int(0.12 * height))
         plot_width = max(1, width - pad_left - pad_right)
         plot_height = max(1, height - pad_top - pad_bottom)
         max_value = max(values) if max(values) > 0 else 1

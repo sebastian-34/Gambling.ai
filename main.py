@@ -13,9 +13,10 @@ except Exception:
 from poker.game import PokerGame
 
 try:
-	from poker.ui import PokerTableUI
+	from poker.ui import PokerTableUI, GameStartupScreen
 except Exception:
 	PokerTableUI = None
+	GameStartupScreen = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -97,7 +98,29 @@ def _prompt_step_through(default: bool = True) -> bool:
 	return _prompt_yes_no("Enable click-through turn stepping?", default=default)
 
 
-def resolve_runtime_options(args: argparse.Namespace) -> tuple[bool, str, bool, bool]:
+def resolve_runtime_options(args: argparse.Namespace) -> tuple[bool, str, bool, bool, int]:
+	# Use startup screen if GameStartupScreen is available
+	if GameStartupScreen is not None:
+		startup = GameStartupScreen()
+		result = startup.show()
+		
+		if result is None:
+			# User quit without starting
+			sys.exit(0)
+		
+		# In visual mode, always enable step-through
+		enable_step = True
+		rounds = result.get("rounds", 10)
+		
+		return (
+			result.get("table_talk", True),
+			result.get("mode", "visual"),
+			result.get("play_along", False),
+			enable_step,
+			rounds
+		)
+	
+	# Fallback to terminal prompts if UI not available
 	table_talk = True
 	if args.table_talk == "on":
 		table_talk = True
@@ -128,12 +151,12 @@ def resolve_runtime_options(args: argparse.Namespace) -> tuple[bool, str, bool, 
 	elif sys.stdin.isatty() and display_mode == "visual":
 		step_through = _prompt_step_through(default=True)
 
-	return table_talk, display_mode, play_along, step_through
+	return table_talk, display_mode, play_along, step_through, args.rounds
 
 
 def main() -> None:
 	args = parse_args()
-	table_talk, display_mode, play_along, step_through = resolve_runtime_options(args)
+	table_talk, display_mode, play_along, step_through, rounds = resolve_runtime_options(args)
 	agents = build_default_agents()
 	dealer_agent = build_default_dealer_agent()
 	if play_along and agents:
@@ -160,7 +183,7 @@ def main() -> None:
 		dealer_agent=dealer_agent,
 		step_through=step_through,
 	)
-	standings = game.play_tournament(rounds=args.rounds)
+	standings = game.play_tournament(rounds=rounds)
 
 	if display_mode == "replay":
 		replay = game.get_replay_text()
