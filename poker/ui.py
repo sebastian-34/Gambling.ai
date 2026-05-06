@@ -239,6 +239,9 @@ class PokerTableUI:
         
         # Tool analytics tracking
         self._tool_analytics: dict[str, Any] = {}  # Store current tool outputs for display
+        
+        # Play-along mode flag
+        self.play_along = False
 
         self._feature_styles = [
             {"skin": "#F5CBA7", "shirt": "#1F618D", "hat": "cap"},
@@ -473,23 +476,27 @@ class PokerTableUI:
         for tid in text_ids:
             self.canvas.tag_raise(tid)
 
-    def _draw_speech_bubble(self, x: float, y: float, text: str) -> None:
-        wrapped = textwrap.fill(text[:120], width=28)
+    def _draw_speech_bubble(self, x: float, y: float, text: str, speaker: str = "") -> None:
+        wrapped = textwrap.fill(text[:100], width=22)
+        
+        # Adjust y position if we have a speaker header
+        speaker_offset = 20 if speaker else 0
+        
         text_id = self.canvas.create_text(
             x,
-            y,
+            y + speaker_offset,
             text=wrapped,
-            font=("Consolas", 10),
+            font=("Consolas", 9),
             fill="#1B2631",
             justify="center",
         )
         bbox = self.canvas.bbox(text_id)
         if not bbox:
             return
-        left = bbox[0] - 12
-        top = bbox[1] - 8
-        right = bbox[2] + 12
-        bottom = bbox[3] + 8
+        left = bbox[0] - 10
+        top = bbox[1] - 7
+        right = bbox[2] + 10
+        bottom = bbox[3] + 7
         # Clamp bubble to canvas bounds to avoid clipping
         canvas_w = max(1, int(self._canvas_width))
         canvas_h = max(1, int(self._canvas_height))
@@ -507,6 +514,28 @@ class PokerTableUI:
             outline="#AAB7B8",
             width=2,
         )
+        
+        # Draw speaker name header if provided
+        if speaker:
+            header_text = f"💬 {speaker}"
+            header_id = self.canvas.create_text(
+                x,
+                y - 8,
+                text=header_text,
+                font=("Consolas", 8, "bold"),
+                fill="#F39C12",
+                justify="center",
+            )
+            header_bbox = self.canvas.bbox(header_id)
+            if header_bbox:
+                # Header background
+                self.canvas.create_rectangle(
+                    header_bbox[0] - 5, header_bbox[1] - 2,
+                    header_bbox[2] + 5, header_bbox[3] + 2,
+                    fill="#1C2833", outline="#F39C12", width=1
+                )
+                self.canvas.tag_raise(header_id)
+        
         # Adjust speech pointer so it stays within bounds
         px1 = max(left + 8, min(x - 10, right - 12))
         px2 = max(left + 12, min(x + 10, right - 8))
@@ -600,17 +629,17 @@ class PokerTableUI:
         return seats
     
     def _get_dialogue_position(self, seat_idx: int, player_x: float, player_y: float) -> tuple[float, float, float, float]:
-        """Calculate dialogue box position based on seat position."""
-        if seat_idx == 0:  # Top center - move DOWN to avoid clipping top
-            return (player_x, player_y + 100, 200, 80)
-        elif seat_idx == 1:  # Right upper
-            return (player_x - 250, player_y - 60, 200, 100)
-        elif seat_idx == 2:  # Right lower
-            return (player_x - 250, player_y - 60, 200, 100)
-        elif seat_idx == 3:  # Bottom center - move UP to avoid clipping dealer
-            return (player_x, player_y - 160, 200, 80)
-        else:  # Left (seat 4)
-            return (player_x + 150, player_y - 60, 200, 100)
+        """Calculate dialogue box position close to agent."""
+        if seat_idx == 0:  # Llama (top center)
+            return (player_x, player_y + 60, 180, 60)
+        elif seat_idx == 1:  # Mistral (upper right) - below avatar
+            return (player_x, player_y + 80, 180, 60)
+        elif seat_idx == 2:  # Qwen (lower right) - needs adjustment
+            return (player_x, player_y - 100, 180, 60)
+        elif seat_idx == 3:  # Mahesh (bottom/left) - perfect position
+            return (player_x, player_y - 100, 180, 60)
+        else:  # Phi (upper left, seat 4) - below avatar
+            return (player_x, player_y + 80, 180, 60)
     
     def _draw_tool_analytics(self) -> None:
         """Draw tool analytics information on the table."""
@@ -651,7 +680,7 @@ class PokerTableUI:
             equity_pct = analytics["equity"].get("win_equity", 0) * 100
             self.canvas.create_text(
                 panel_x + 5, line_y,
-                text=f"Equity: {equity_pct:.1f}%",
+                text=f"1. Equity: {equity_pct:.1f}%",
                 font=("Consolas", 8),
                 fill="#ABEBC6",
                 anchor="nw"
@@ -663,19 +692,19 @@ class PokerTableUI:
             breakeven = analytics["pot_odds"].get("break_even_equity", 0) * 100
             self.canvas.create_text(
                 panel_x + 5, line_y,
-                text=f"Break-even: {breakeven:.1f}%",
+                text=f"2. Break-even: {breakeven:.1f}%",
                 font=("Consolas", 8),
                 fill="#F8B88B",
                 anchor="nw"
             )
             line_y += line_height
         
-        # Tool 6: Bet Size
+        # Tool 3: Bet Size
         if "bet_size" in analytics:
             rec_bet = analytics["bet_size"].get("recommended_bet", 0)
             self.canvas.create_text(
                 panel_x + 5, line_y,
-                text=f"Bet Size: {rec_bet}",
+                text=f"3. Bet Size: {rec_bet}",
                 font=("Consolas", 8),
                 fill="#85C1E9",
                 anchor="nw"
@@ -763,6 +792,7 @@ class PokerTableUI:
         )
 
         seats = self._get_seat_positions()
+        avatar_draws: list[tuple[float, float, dict[str, str], bool]] = []
 
         for idx, player in enumerate(players):
             x, y = seats[idx]
@@ -774,11 +804,6 @@ class PokerTableUI:
 
             style = self._feature_styles[idx % len(self._feature_styles)]
             
-            # Smaller avatar (radius ~15px instead of ~25px)
-            avatar_x = x - 40
-            avatar_y = y
-            self._draw_avatar_scaled(avatar_x, avatar_y, style, is_actor=(name == current_actor), scale=0.65)
-
             visible_cards = reveal_all_cards or (viewer_name is not None and viewer_name == name)
             if visible_cards and cards:
                 # Display cards with suit symbols and proper rank formatting
@@ -831,33 +856,7 @@ class PokerTableUI:
                 panel_fill = "#1C2833"
                 text_fill = "#FFFFFF"
             
-            # Calculate hand odds for this player (estimate win probability)
-            hand_odds_text = ""
-            if visible_cards and cards and len(cards) == 2:
-                try:
-                    from .tools import estimate_equity
-                    hole_ranks = [self._card_to_rank(c) for c in cards]
-                    # Use actual community cards on the board (not just empty list)
-                    board_ranks = [self._card_to_rank(c) for c in community_cards] if community_cards else []
-                    if hole_ranks and len(hole_ranks) == 2 and all(2 <= r <= 14 for r in hole_ranks):
-                        # Calculate number of opponents still in (estimate from other players)
-                        opponents_in = sum(1 for p in players if p != player and not getattr(p, 'folded', False))
-                        opponents_in = max(1, min(opponents_in, 4))  # 1-4 opponents
-                        # Estimate opponent holdings based on board texture
-                        opponent_hole_ranks = []
-                        if board_ranks:  # If there are community cards
-                            # Estimate opponent cards as random (this is safe for UI display only)
-                            opponent_hole_ranks = []
-                        equity_result = estimate_equity(hole_ranks, board_ranks, num_opponents=opponents_in)
-                        my_odds = equity_result.win_equity * 100
-                        hand_odds_text = f"{my_odds:.0f}%"
-                except Exception as e:
-                    hand_odds_text = ""
-            
-            # Player info panel position, adjusted for smaller avatars and better spacing
             panel_lines = [name, f"${stack}", f"Bet: {current_bet}", cards_text]
-            if hand_odds_text:
-                panel_lines.append(hand_odds_text)
             
             self._draw_text_box_compact(
                 x + 25,
@@ -874,7 +873,13 @@ class PokerTableUI:
 
             if name in self._speech and self._speech[name]:
                 bubble_text = self._speech[name][:80]
-                self._draw_speech_bubble(x + 15, y - 85, bubble_text)
+                bubble_x, bubble_y, _, _ = self._get_dialogue_position(idx, x, y)
+                self._draw_speech_bubble(bubble_x, bubble_y, bubble_text, speaker=name)
+
+            avatar_draws.append((x - 40, y, style, name == current_actor))
+
+        for avatar_x, avatar_y, style, is_actor in avatar_draws:
+            self._draw_avatar_scaled(avatar_x, avatar_y, style, is_actor=is_actor, scale=0.65)
 
         # Physical dealer with enhanced styling (bottom center, smaller)
         dealer_x = center_x

@@ -68,6 +68,8 @@ class PokerGame:
         self._replay_log: list[str] = []
         self.table_ui = table_ui
         self.play_along = play_along
+        if self.table_ui:
+            self.table_ui.play_along = play_along
         self.human_player_name = human_player_name
         self._current_street = "preflop"
         self._community_cards: list[Card] = []
@@ -344,6 +346,10 @@ class PokerGame:
         
         # Compute tool analytics for visualization
         analytics = self._compute_tool_analytics(current_actor)
+        if self.play_along and current_actor == self.human_player_name:
+            analytics = dict(analytics)
+            analytics.pop("equity", None)
+            analytics.pop("pot_odds", None)
         self.table_ui.set_tool_analytics(analytics)
         
         self.table_ui.render(

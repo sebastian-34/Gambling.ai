@@ -402,14 +402,17 @@ class PokerResultsDashboard:
             tk.Label(self.charts_tab, text="No chart data available.", bg=self.BG, fg=self.MUTED).pack(pady=18)
             return
 
+        scroll = ScrollableFrame(self.charts_tab, self.BG)
+        scroll.pack(fill="both", expand=True, padx=2, pady=2)
+
         chip_series = self._chip_series()
         labels = [str(hand.get("hand", index + 1)) for index, hand in enumerate(self.pot_history)]
 
-        top = tk.Canvas(self.charts_tab, bg=self.PANEL, height=360, highlightthickness=1, highlightbackground="#E5E7EB")
-        top.pack(fill="both", expand=True, padx=14, pady=(14, 10))
+        top = tk.Canvas(scroll.inner, bg=self.PANEL, height=360, highlightthickness=1, highlightbackground="#E5E7EB")
+        top.pack(fill="x", expand=False, padx=14, pady=(14, 10))
         top.bind("<Configure>", lambda _event: self._draw_line_chart(top, title="Chip stack over time", series=chip_series, labels=labels))
 
-        bottom = tk.Frame(self.charts_tab, bg=self.BG)
+        bottom = tk.Frame(scroll.inner, bg=self.BG)
         bottom.pack(fill="both", expand=True, padx=14, pady=(0, 14))
 
         left = tk.Canvas(bottom, bg=self.PANEL, height=320, highlightthickness=1, highlightbackground="#E5E7EB")
@@ -484,10 +487,10 @@ class PokerResultsDashboard:
             justify="left"
         ).pack(anchor="w", padx=14, pady=8)
         
-        # Tool 4: Opponent Profiler
+        # Tool 3: Opponent Profiler
         frame = self._panel(
             scroll_frame.inner,
-            "🔍 Tool 4: Opponent Profiler",
+            "🔍 Tool 3: Opponent Profiler",
             "Tracks player tendencies and styles"
         )
         tk.Label(
@@ -503,10 +506,10 @@ class PokerResultsDashboard:
             justify="left"
         ).pack(anchor="w", padx=14, pady=8)
         
-        # Tool 5: Range Tracker
+        # Tool 4: Range Tracker
         frame = self._panel(
             scroll_frame.inner,
-            "📊 Tool 5: Range Tracker",
+            "📊 Tool 4: Range Tracker",
             "Estimates opponent hand ranges"
         )
         tk.Label(
@@ -522,10 +525,10 @@ class PokerResultsDashboard:
             justify="left"
         ).pack(anchor="w", padx=14, pady=8)
         
-        # Tool 6: Bet-Size Recommender
+        # Tool 5: Bet-Size Recommender
         frame = self._panel(
             scroll_frame.inner,
-            "🎯 Tool 6: Bet-Size Recommender",
+            "🎯 Tool 5: Bet-Size Recommender",
             "Calculates optimal bet amounts"
         )
         tk.Label(
@@ -541,10 +544,10 @@ class PokerResultsDashboard:
             justify="left"
         ).pack(anchor="w", padx=14, pady=8)
         
-        # Tool 7: Bluff Planner
+        # Tool 6: Bluff Planner
         frame = self._panel(
             scroll_frame.inner,
-            "🎭 Tool 7: Bluff Planner",
+            "🎭 Tool 6: Bluff Planner",
             "Identifies profitable bluff opportunities"
         )
         tk.Label(
@@ -560,10 +563,10 @@ class PokerResultsDashboard:
             justify="left"
         ).pack(anchor="w", padx=14, pady=8)
         
-        # Tool 10: Memory Retrieval
+        # Tool 7: Memory Retrieval
         frame = self._panel(
             scroll_frame.inner,
-            "💾 Tool 10: Memory Retrieval",
+            "💾 Tool 7: Memory Retrieval",
             "Recalls hand history and outcomes"
         )
         tk.Label(
