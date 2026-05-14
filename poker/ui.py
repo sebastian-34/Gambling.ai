@@ -338,7 +338,6 @@ class PokerTableUI:
         self.next_button.config(state=tk.NORMAL)
         self.fast_forward_button.config(state=tk.NORMAL)
         self._step_waiting = True
-        print(f"[DEBUG] wait_for_next started for: {label}")
         
         start_time = time.time()
         timeout_seconds = 300  # 5 minute timeout
@@ -346,27 +345,22 @@ class PokerTableUI:
         while self._step_waiting:
             try:
                 if not self.root.winfo_exists():
-                    print("[DEBUG] Root window no longer exists")
                     break
                 
                 # Check timeout
                 if time.time() - start_time > timeout_seconds:
-                    print(f"[DEBUG] wait_for_next timeout after {timeout_seconds}s for: {label}")
                     break
                 
                 # Process all events properly
                 self.root.update()
             except tk.TclError as e:
                 # Window was closed
-                print(f"[DEBUG] TclError in wait_for_next: {e}")
                 break
             except RuntimeError as e:
                 # Event processing error - skip and continue
-                print(f"[DEBUG] RuntimeError in wait_for_next: {e}")
                 continue
             except Exception as e:
                 # Catch any other errors and continue
-                print(f"[DEBUG] Exception in wait_for_next: {type(e).__name__}: {e}")
                 import traceback
                 print(traceback.format_exc())
                 break
@@ -375,7 +369,6 @@ class PokerTableUI:
         self.fast_forward_button.config(state=tk.DISABLED)
         
         elapsed = time.time() - start_time
-        print(f"[DEBUG] wait_for_next finished for: {label}, elapsed: {elapsed:.2f}s")
     
     def _on_canvas_resize(self, event: tk.Event) -> None:
         """Handle canvas resize to update seat positions."""
